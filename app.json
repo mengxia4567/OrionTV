@@ -34,7 +34,7 @@
     "experiments": {
       "typedRoutes": true
     },
-    "name": "OrionTV",
+    "name": "个人观影",
     "slug": "OrionTV",
     "orientation": "default",
     "icon": "./assets/images/icon.png",
