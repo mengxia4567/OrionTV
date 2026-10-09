@@ -3,7 +3,7 @@ import { useFonts } from "expo-font";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
-import { Platform, View, StyleSheet } from "react-native";
+import { Platform, View, StyleSheet, AppState } from "react-native";
 import Toast from "react-native-toast-message";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
@@ -46,6 +46,19 @@ export default function RootLayout() {
       checkLoginStatus(apiBaseUrl);
     }
   }, [apiBaseUrl, checkLoginStatus]);
+
+  // 从后台/待机恢复时复查登录状态（令牌失效时自动静默重登）
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") {
+        const url = useSettingsStore.getState().apiBaseUrl;
+        if (url) {
+          checkLoginStatus(url);
+        }
+      }
+    });
+    return () => subscription.remove();
+  }, [checkLoginStatus]);
 
   useEffect(() => {
     if (loaded || error) {

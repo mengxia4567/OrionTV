@@ -75,8 +75,37 @@ export interface ServerConfig {
   StorageType: "localstorage" | "redis" | string;
 }
 
+// region: --- Auth Token Storage ---
+// 登录令牌以 Authorization 头作为认证主通道（比 cookie 在 RN 各平台上更可靠）。
+// 服务端中间件优先读取该头，支持 "Token xxx" / "Bearer xxx" / 原始值三种形式。
+export const AUTH_TOKEN_KEY = "authToken";
+
+export async function getStoredAuthToken(): Promise<string | null> {
+  try {
+    const token = await AsyncStorage.getItem(AUTH_TOKEN_KEY);
+    return token && token.trim() ? token : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function setStoredAuthToken(token: string | null | undefined): Promise<void> {
+  try {
+    if (token && token.trim()) {
+      await AsyncStorage.setItem(AUTH_TOKEN_KEY, token);
+    } else {
+      await AsyncStorage.removeItem(AUTH_TOKEN_KEY);
+    }
+  } catch {
+    // 忽略存储异常，不影响主流程
+  }
+}
+
 export class API {
   public baseURL: string = "";
+
+  // 会话失效自愈回调（由 authStore 注册：先续期、再静默重登）
+  private onAuthRecovery: (() => Promise<boolean>) | null = null;
 
   constructor(baseURL?: string) {
     if (baseURL) {
@@ -88,14 +117,39 @@ export class API {
     this.baseURL = url;
   }
 
-  private async _fetch(url: string, options: RequestInit = {}): Promise<Response> {
+  public setAuthRecoveryHandler(handler: (() => Promise<boolean>) | null) {
+    this.onAuthRecovery = handler;
+  }
+
+  private async _fetch(
+    url: string,
+    options: RequestInit & { skipAuth?: boolean; skipRecovery?: boolean } = {},
+    retried = false
+  ): Promise<Response> {
     if (!this.baseURL) {
       throw new Error("API_URL_NOT_SET");
     }
 
-    const response = await fetch(`${this.baseURL}${url}`, options);
+    const { skipAuth = false, skipRecovery = false, ...init } = options;
+
+    const headers = new Headers(init.headers);
+    if (!skipAuth) {
+      const token = await getStoredAuthToken();
+      if (token) {
+        headers.set("Authorization", `Token ${token}`);
+      }
+    }
+
+    const response = await fetch(`${this.baseURL}${url}`, { ...init, headers });
 
     if (response.status === 401) {
+      // 令牌过期/失效：自动续期或静默重登一次，然后重试原请求
+      if (!skipAuth && !skipRecovery && !retried && this.onAuthRecovery) {
+        const recovered = await this.onAuthRecovery().catch(() => false);
+        if (recovered) {
+          return this._fetch(url, options, true);
+        }
+      }
       throw new Error("UNAUTHORIZED");
     }
 
@@ -106,27 +160,56 @@ export class API {
     return response;
   }
 
-  async login(username?: string | undefined, password?: string): Promise<{ ok: boolean }> {
+  async login(username?: string | undefined, password?: string): Promise<{ ok: boolean; token?: string }> {
     const response = await this._fetch("/api/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),
+      skipAuth: true,
     });
 
-    // 存储cookie到AsyncStorage
+    // 存储cookie到AsyncStorage（兼容不支持 token 的服务端）
     const cookies = response.headers.get("Set-Cookie");
     if (cookies) {
       await AsyncStorage.setItem("authCookies", cookies);
     }
 
-    return response.json();
+    const data = await response.json();
+    // 保存响应体中的 token（认证主通道）
+    if (data && typeof data.token === "string") {
+      await setStoredAuthToken(data.token);
+    }
+    return data;
+  }
+
+  /**
+   * 尝试续期当前会话（服务端从 Authorization 头读取当前令牌）。
+   * 成功返回新令牌并持久化；失败返回 null（调用方回退到静默重登）。
+   */
+  async refreshToken(): Promise<string | null> {
+    try {
+      const response = await this._fetch("/api/auth/refresh", {
+        method: "POST",
+        skipRecovery: true,
+      });
+      const data = await response.json();
+      if (data && typeof data.token === "string" && data.token) {
+        await setStoredAuthToken(data.token);
+        return data.token;
+      }
+      return null;
+    } catch {
+      return null;
+    }
   }
 
   async logout(): Promise<{ ok: boolean }> {
     const response = await this._fetch("/api/logout", {
       method: "POST",
+      skipRecovery: true,
     });
     await AsyncStorage.setItem("authCookies", '');
+    await setStoredAuthToken(null);
     return response.json();
   }
 

@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { SettingsManager } from "@/services/storage";
-import { api, ServerConfig } from "@/services/api";
+import { api, ServerConfig, setStoredAuthToken } from "@/services/api";
 import { storageConfig } from "@/services/storageConfig";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import Logger from "@/utils/Logger";
@@ -109,6 +109,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     });
     if ( currentApiBaseUrl !== processedApiBaseUrl) {
       await AsyncStorage.setItem('authCookies', '');
+      await setStoredAuthToken(null);
     }
     api.setBaseUrl(processedApiBaseUrl);
     // Also update the URL in the state so the input field shows the processed URL
