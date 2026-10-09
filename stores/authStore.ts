@@ -130,32 +130,45 @@ const useAuthStore = create<AuthState>((set) => ({
 }));
 
 // 会话自愈回调：请求层遇到 401 时调用 —— 先续期、再静默重登，最后回退到登录框
+// 防重入：并发 401 只触发一次恢复流程，避免重复请求与重复登录
+let recoverSessionPromise: Promise<boolean> | null = null;
+
 const recoverSession = async (): Promise<boolean> => {
-  // 1) 用 refresh token 续期（保持同一设备会话，不产生新会话）
-  const refreshed = await api.refreshToken();
-  if (refreshed) {
-    return true;
+  if (recoverSessionPromise) {
+    return recoverSessionPromise;
   }
-
-  // 2) 静默重登（使用已保存的账号密码）
-  const credentials = await LoginCredentialsManager.get();
-  if (credentials && credentials.password) {
-    try {
-      const loginResult = await api.login(credentials.username, credentials.password);
-      if (loginResult && loginResult.ok) {
-        return true;
-      }
-    } catch (error) {
-      if (error instanceof Error && error.message === "UNAUTHORIZED") {
-        await LoginCredentialsManager.clear();
-      }
-      logger.error("Session recovery login failed:", error);
+  recoverSessionPromise = (async (): Promise<boolean> => {
+    // 1) 用 refresh token 续期（保持同一设备会话，不产生新会话）
+    const refreshed = await api.refreshToken();
+    if (refreshed) {
+      return true;
     }
-  }
 
-  // 3) 无法自动恢复：回退到手动登录
-  useAuthStore.setState({ isLoggedIn: false, isLoginModalVisible: true });
-  return false;
+    // 2) 静默重登（使用已保存的账号密码）
+    const credentials = await LoginCredentialsManager.get();
+    if (credentials && credentials.password) {
+      try {
+        const loginResult = await api.login(credentials.username, credentials.password);
+        if (loginResult && loginResult.ok) {
+          return true;
+        }
+      } catch (error) {
+        if (error instanceof Error && error.message === "UNAUTHORIZED") {
+          await LoginCredentialsManager.clear();
+        }
+        logger.error("Session recovery login failed:", error);
+      }
+    }
+
+    // 3) 无法自动恢复：回退到手动登录
+    useAuthStore.setState({ isLoggedIn: false, isLoginModalVisible: true });
+    return false;
+  })();
+  try {
+    return await recoverSessionPromise;
+  } finally {
+    recoverSessionPromise = null;
+  }
 };
 
 api.setAuthRecoveryHandler(recoverSession);
