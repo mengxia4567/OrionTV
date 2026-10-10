@@ -47,7 +47,7 @@
     "experiments": {
       "typedRoutes": true
     },
-    "name": "福宝观影",
+    "name": "福宝",
     "slug": "OrionTV",
     "orientation": "default",
     "icon": "./assets/images/icon.png",

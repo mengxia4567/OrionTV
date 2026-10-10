@@ -14,6 +14,7 @@ import useAuthStore from "@/stores/authStore";
 import { useUpdateStore, initUpdateStore } from "@/stores/updateStore";
 import { UpdateModal } from "@/components/UpdateModal";
 import PhotoWallSplash from "@/components/PhotoWallSplash";
+import { syncWallPhotos } from "@/services/wallPhotos";
 import { UPDATE_CONFIG } from "@/constants/UpdateConfig";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import Logger from '@/utils/Logger';
@@ -25,6 +26,13 @@ SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   const [splashDone, setSplashDone] = useState(false);
+
+  // 启动完成后台同步「照片墙」照片集（失败静默；同步完成后下次启动生效）
+  useEffect(() => {
+    if (splashDone) {
+      syncWallPhotos();
+    }
+  }, [splashDone]);
   const colorScheme = "dark";
   const [loaded, error] = useFonts({
     SpaceMono: require("../assets/fonts/SpaceMono-Regular.ttf"),

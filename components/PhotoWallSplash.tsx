@@ -7,15 +7,17 @@
  *   C 派对墙    — 弹跳入场 → 波浪操 → 转圈派对 → 字标
  *   D 全餐      — A 的飞入 + B 的熊猫 + 眨眼 + 字标（推荐观感）
  *
+ * 照片来源（动态）：启动时优先用「服务器同步到本地的照片集」（services/wallPhotos.ts），
+ * 否则回退内置 assets/photos。服务器新照片由 43 的发布器产出（/data/picture → live.137621.xyz/wall/）。
+ *
  * 设计口径（与 agent-data/projects/oriontv-splash 中的预览/生成器一致）：
  *   - 网格 16×9 = 144 格；熊猫遮罩为纯几何计算（computePandaMask，参数与 maskgen.py v3 逐位一致）
  *   - 零新依赖：只用 react-native-reanimated 的 transform/opacity；墙级动画作用于整层容器
- *   - 照片：assets/photos/*（长边约 224px 缩略图，构建前由脚本生成）
  *   - 任意时刻按「确认键」/点击可跳过；超过 9s 兜底自动结束
  *
- * 由 agent-data/projects/oriontv-splash/patch_photowall.py 部署到本仓库，请勿只手改本文件而不同步源脚本。
+ * 由 agent-data/projects/oriontv-splash 的部署脚本落地到本仓库，请勿只手改本文件而不同步源脚本。
  */
-import React, { useCallback, useEffect, useMemo, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Image,
   ImageSourcePropType,
@@ -24,6 +26,7 @@ import {
   StyleSheet,
   Text,
   useWindowDimensions,
+  View,
 } from "react-native";
 import Animated, {
   Easing,
@@ -37,6 +40,7 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { PHOTOS } from "@/assets/photos";
+import { loadWallPhotoSources } from "@/services/wallPhotos";
 
 /* ================= 常量 ================= */
 const COLS = 16;
@@ -153,12 +157,12 @@ function shuffleIdx(n: number): number[] {
 }
 
 /** 循环填充照片到 144 格：每轮重洗，跨轮避免相邻重复 */
-function assignPhotos(): ImageSourcePropType[] {
+function assignPhotos(photos: ImageSourcePropType[]): ImageSourcePropType[] {
   const out: ImageSourcePropType[] = [];
-  if (!PHOTOS || PHOTOS.length === 0) return out;
+  if (!photos || photos.length === 0) return out;
   let pool: ImageSourcePropType[] = [];
   while (out.length < N) {
-    if (pool.length === 0) pool = shuffleIdx(PHOTOS.length).map((i) => PHOTOS[i]);
+    if (pool.length === 0) pool = shuffleIdx(photos.length).map((i) => photos[i]);
     const last = out[out.length - 1];
     if (out.length > 0 && pool[0] === last && pool.length > 1) {
       [pool[0], pool[1]] = [pool[1], pool[0]];
@@ -168,11 +172,16 @@ function assignPhotos(): ImageSourcePropType[] {
   return out;
 }
 
-function buildScene(mode: SplashMode, width: number, height: number): Scene {
+function buildScene(
+  mode: SplashMode,
+  width: number,
+  height: number,
+  photos: ImageSourcePropType[]
+): Scene {
   const tileW = (width - PAD * 2 - GAP * (COLS - 1)) / COLS;
   const tileH = (height - PAD * 2 - GAP * (ROWS - 1)) / ROWS;
   const k = width / 960; // 距离随屏宽缩放
-  const sources = assignPhotos();
+  const sources = assignPhotos(photos);
   const mask = mode === "B" || mode === "D" ? computePandaMask(COLS, ROWS) : null;
   const rand = (a: number, b: number) => a + Math.random() * (b - a);
 
@@ -407,9 +416,17 @@ interface SplashProps {
   onDone: () => void;
 }
 
-function PhotoWallSplashImpl({ mode, onDone }: SplashProps & { mode: SplashMode }) {
+interface ImplProps extends SplashProps {
+  mode: SplashMode;
+  sources: ImageSourcePropType[];
+}
+
+function PhotoWallSplashImpl({ mode, onDone, sources }: ImplProps) {
   const { width, height } = useWindowDimensions();
-  const scene = useMemo(() => buildScene(mode, width, height), [mode, width, height]);
+  const scene = useMemo(
+    () => buildScene(mode, width, height, sources),
+    [mode, width, height, sources]
+  );
   const winkVal = useSharedValue(0);
   const fade = useSharedValue(0);
   const wp = useSharedValue(0);
@@ -545,9 +562,7 @@ function PhotoWallSplashImpl({ mode, onDone }: SplashProps & { mode: SplashMode 
         福宝观影
         <Text style={styles.dot}> ·</Text>
       </Animated.Text>
-      <Animated.Text style={[styles.hint, hintStyle]}>
-        按确认键跳过
-      </Animated.Text>
+      <Animated.Text style={[styles.hint, hintStyle]}>按确认键跳过</Animated.Text>
       <Pressable
         style={StyleSheet.absoluteFill}
         onPress={skip}
@@ -558,21 +573,40 @@ function PhotoWallSplashImpl({ mode, onDone }: SplashProps & { mode: SplashMode 
   );
 }
 
-/** 入口：启动时随机挑一个模式 */
+/** 入口：启动时随机挑一个模式；照片源 = 服务器同步集 > 内置集 */
 export default function PhotoWallSplash({ onDone }: SplashProps) {
   const mode = useMemo<SplashMode>(
     () => SPLASH_MODES[Math.floor(Math.random() * SPLASH_MODES.length)],
     []
   );
+  const [sources, setSources] = useState<ImageSourcePropType[] | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    loadWallPhotoSources()
+      .then((s) => {
+        if (alive) setSources(s);
+      })
+      .catch(() => {
+        if (alive) setSources(PHOTOS);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // 无照片素材时直接放行（保护入口，不阻塞 app）
   useEffect(() => {
-    if (!PHOTOS || PHOTOS.length === 0) onDone();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  if (!PHOTOS || PHOTOS.length === 0) return null;
+    if (sources && sources.length === 0) onDone();
+  }, [sources, onDone]);
 
-  return <PhotoWallSplashImpl key={mode} mode={mode} onDone={onDone} />;
+  if (sources === null) {
+    // 读本地同步状态的一瞬间（通常 <30ms），先给黑场
+    return <View style={styles.root} />;
+  }
+  if (sources.length === 0) return null;
+
+  return <PhotoWallSplashImpl key={mode} mode={mode} sources={sources} onDone={onDone} />;
 }
 
 /* ================= 样式 ================= */
