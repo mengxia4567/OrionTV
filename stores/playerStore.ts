@@ -5,8 +5,18 @@ import { RefObject } from "react";
 import { PlayRecord, PlayRecordManager, PlayerSettingsManager } from "@/services/storage";
 import useDetailStore, { episodesSelectorBySource } from "./detailStore";
 import Logger from '@/utils/Logger';
+import { api, unwrapVodProxyUrl } from "@/services/api";
 
 const logger = Logger.withTag('PlayerStore');
+
+// 点播 m3u8 默认走服务端代理（服务端会 302 到媒体加速代理；失败自动回退原始地址）
+const toPlayUrl = (ep: string): string => {
+  try {
+    return api.getVodProxyUrl(ep);
+  } catch {
+    return ep;
+  }
+};
 
 interface Episode {
   url: string;
@@ -209,7 +219,7 @@ const usePlayerStore = create<PlayerState>((set, get) => ({
       
       const episodesMappingStart = performance.now();
       const mappedEpisodes = episodes.map((ep, index) => ({
-        url: ep,
+        url: toPlayUrl(ep),
         title: `第 ${index + 1} 集`,
       }));
       const episodesMappingEnd = performance.now();
@@ -472,6 +482,21 @@ const usePlayerStore = create<PlayerState>((set, get) => ({
   handleVideoError: async (errorType: 'ssl' | 'network' | 'other', failedUrl: string) => {
     const perfStart = performance.now();
     logger.error(`[VIDEO_ERROR] Handling ${errorType} error for URL: ${failedUrl}`);
+    // 代理链路失败自愈：失败的是代理 URL 时，先用原始地址原地重试一次（避免代理故障导致所有源"不可用"）
+    const originalPlayUrl = unwrapVodProxyUrl(failedUrl);
+    if (originalPlayUrl) {
+      const { episodes: currentEps, currentEpisodeIndex: curIdx } = get();
+      if (currentEps[curIdx]) {
+        logger.warn("[VIDEO_ERROR] Proxied URL failed, retrying original URL");
+        set({
+          isLoading: false,
+          episodes: currentEps.map((e, i) =>
+            i === curIdx ? { ...e, url: originalPlayUrl } : e
+          ),
+        });
+        return;
+      }
+    }
     
     const detailStoreState = useDetailStore.getState();
     const { detail } = detailStoreState;
@@ -512,7 +537,7 @@ const usePlayerStore = create<PlayerState>((set, get) => ({
       const newEpisodes = fallbackSource.episodes || [];
       if (newEpisodes.length > currentEpisodeIndex) {
         const mappedEpisodes = newEpisodes.map((ep, index) => ({
-          url: ep,
+          url: toPlayUrl(ep),
           title: `第 ${index + 1} 集`,
         }));
         

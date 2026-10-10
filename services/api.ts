@@ -283,6 +283,21 @@ export class API {
     return `${this.baseURL}/api/image-proxy?url=${encodeURIComponent(imageUrl)}`;
   }
 
+  /**
+   * 点播 m3u8 走服务端代理（服务端可 302 到媒体加速代理：多线程缓存 + 预取）。
+   * 非 m3u8 / 未配置服务器地址时原样返回。
+   */
+  getVodProxyUrl(originalUrl: string): string {
+    if (!this.baseURL || !originalUrl) {
+      return originalUrl;
+    }
+    const lower = originalUrl.toLowerCase();
+    if ((lower.startsWith("http://") || lower.startsWith("https://")) && lower.includes(".m3u8")) {
+      return `${this.baseURL}/api/proxy/vod/m3u8?url=${encodeURIComponent(originalUrl)}`;
+    }
+    return originalUrl;
+  }
+
   async getDoubanData(
     type: "movie" | "tv",
     tag: string,
@@ -322,3 +337,19 @@ export class API {
 
 // 默认实例
 export let api = new API();
+
+/** 从代理 URL 还原原始地址（非代理 URL 返回 null）—— 播放失败自愈用 */
+export function unwrapVodProxyUrl(url: string): string | null {
+  try {
+    const marker = "/api/proxy/vod/m3u8?url=";
+    const idx = url.indexOf(marker);
+    if (idx < 0) {
+      return null;
+    }
+    const encoded = url.substring(idx + marker.length).split("&")[0];
+    const decoded = decodeURIComponent(encoded);
+    return decoded.startsWith("http") ? decoded : null;
+  } catch {
+    return null;
+  }
+}
