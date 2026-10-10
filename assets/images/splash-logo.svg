@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- 耳朵（黑底上靠奶油描边区分） -->
+  <circle cx="396" cy="360" r="76" fill="#111111" stroke="#F4EFE6" stroke-width="16"/>
+  <circle cx="628" cy="360" r="76" fill="#111111" stroke="#F4EFE6" stroke-width="16"/>
+  <!-- 头 -->
+  <ellipse cx="512" cy="516" rx="210" ry="180" fill="#F4EFE6"/>
+  <!-- 观影眼镜（黑镜片 + 珊瑚描边，兼作熊猫眼斑） -->
+  <circle cx="438" cy="500" r="78" fill="#111111" stroke="#FF6B4A" stroke-width="20"/>
+  <circle cx="586" cy="500" r="78" fill="#111111" stroke="#FF6B4A" stroke-width="20"/>
+  <rect x="500" y="489" width="24" height="16" rx="8" fill="#FF6B4A"/>
+  <!-- 笑眼 + 高光 -->
+  <path d="M406 518 q32 -30 64 0" fill="none" stroke="#F4EFE6" stroke-width="14" stroke-linecap="round"/>
+  <path d="M554 518 q32 -30 64 0" fill="none" stroke="#F4EFE6" stroke-width="14" stroke-linecap="round"/>
+  <circle cx="400" cy="468" r="11" fill="#F4EFE6"/>
+  <circle cx="548" cy="468" r="11" fill="#F4EFE6"/>
+  <!-- 鼻 + 嘴 -->
+  <path d="M492 578 q20 -17 40 0 q-20 24 -40 0" fill="#111111"/>
+  <path d="M512 604 q-26 34 -52 6" fill="none" stroke="#111111" stroke-width="13" stroke-linecap="round"/>
+  <path d="M512 604 q26 34 52 6" fill="none" stroke="#111111" stroke-width="13" stroke-linecap="round"/>
+  <!-- 播放角标 -->
+  <circle cx="652" cy="656" r="86" fill="#FF6B4A" stroke="#0B0B0C" stroke-width="16"/>
+  <path d="M622 612 L622 700 L700 656 Z" fill="#111111" stroke="#111111" stroke-width="22" stroke-linejoin="round"/>
+</svg>

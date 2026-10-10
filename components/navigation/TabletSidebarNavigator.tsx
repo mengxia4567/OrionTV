@@ -136,7 +136,7 @@ const TabletSidebarNavigator: React.FC<TabletSidebarNavigatorProps> = ({
             )}
           </TouchableOpacity>
           {!collapsed && (
-            <ThemedText style={dynamicStyles.appTitle}>OrionTV</ThemedText>
+            <ThemedText style={dynamicStyles.appTitle}>福宝观影</ThemedText>
           )}
         </View>
 

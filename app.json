@@ -29,12 +29,25 @@
           }
         }
       ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/splash-logo.png",
+          "imageWidth": 288,
+          "resizeMode": "contain",
+          "backgroundColor": "#0B0B0C",
+          "dark": {
+            "image": "./assets/images/splash-logo.png",
+            "backgroundColor": "#0B0B0C"
+          }
+        }
+      ],
       "expo-router"
     ],
     "experiments": {
       "typedRoutes": true
     },
-    "name": "个人观影",
+    "name": "福宝观影",
     "slug": "OrionTV",
     "orientation": "default",
     "icon": "./assets/images/icon.png",
