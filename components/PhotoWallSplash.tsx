@@ -1,21 +1,17 @@
 /**
- * PhotoWallSplash — 开机动画「照片墙」
+ * PhotoWallSplash — 开机动画「照片墙」v3（登录态决策）
+ *
+ * 启动决策：
+ *   设置里已配置服务器地址 + 已登录（有登录令牌）
+ *     → 拉取服务器照片集（带令牌，超时 7s，增量下载）→ 播放照片墙（四模式随机）
+ *   否则（未配置 / 未登录 / 拉不到且无缓存）→ 回退熊猫动画（PandaSplash）
+ *
+ * 防白屏：
+ *   - native splash 保持到本组件首帧渲染后（_layout 不再提前 hide，见部署脚本）
+ *   - 本组件所有阶段（BootFrame / WallScene / PandaSplash）均为全屏黑底
  *
  * 四个模式，启动时随机抽一个：
- *   A 汇聚星河  — 照片从四周飞入汇聚成墙 → 呼吸推进 → 随机点亮 → 字标
- *   B 拼字熊猫  — 快闪成墙 → 墙溶解，只留照片拼出的熊猫头（眼斑压暗）→ 眨眼 → 字标
- *   C 派对墙    — 弹跳入场 → 波浪操 → 转圈派对 → 字标
- *   D 全餐      — A 的飞入 + B 的熊猫 + 眨眼 + 字标（推荐观感）
- *
- * 照片来源（动态）：启动时优先用「服务器同步到本地的照片集」（services/wallPhotos.ts），
- * 否则回退内置 assets/photos。服务器新照片由 43 的发布器产出（/data/picture → live.137621.xyz/wall/）。
- *
- * 设计口径（与 agent-data/projects/oriontv-splash 中的预览/生成器一致）：
- *   - 网格 16×9 = 144 格；熊猫遮罩为纯几何计算（computePandaMask，参数与 maskgen.py v3 逐位一致）
- *   - 零新依赖：只用 react-native-reanimated 的 transform/opacity；墙级动画作用于整层容器
- *   - 任意时刻按「确认键」/点击可跳过；超过 9s 兜底自动结束
- *
- * 由 agent-data/projects/oriontv-splash 的部署脚本落地到本仓库，请勿只手改本文件而不同步源脚本。
+ *   A 汇聚星河 / B 拼字熊猫 / C 派对墙 / D 全餐
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -39,8 +35,10 @@ import Animated, {
   withSequence,
   withTiming,
 } from "react-native-reanimated";
-import { PHOTOS } from "@/assets/photos";
-import { loadWallPhotoSources } from "@/services/wallPhotos";
+import * as SplashScreen from "expo-splash-screen";
+import { isWallEligible, resolveWallPhotos } from "@/services/wallPhotos";
+import PandaSplash from "@/components/PandaSplash";
+import { computePandaMask } from "./PandaMask";
 
 /* ================= 常量 ================= */
 const COLS = 16;
@@ -59,58 +57,7 @@ const EASE_MORPH = Easing.bezier(0.35, 0.9, 0.3, 1);
 export type SplashMode = "A" | "B" | "C" | "D";
 export const SPLASH_MODES: SplashMode[] = ["A", "B", "C", "D"];
 
-/* ================= 熊猫遮罩（纯几何，v3 参数） =================
- * ears/head/lens 坐标空间 1024×1024（同 assets/images/splash-logo.svg 语义）
- * 与 maskgen.py：hfrac=.78 / cy=.43 / thr=.45 / holeThr=.55
- */
-const EARS: number[][] = [[396, 360, 84], [628, 360, 84]];
-const HEAD: number[] = [512, 540, 225, 205];
-const LENS: number[][] = [[384, 522, 92], [640, 522, 92]];
-const CONTENT_H = 461;
-const CENTER_X = 512;
-const CENTER_Y = 510.5;
-const HFRAC = 0.78;
-const CY = 0.43;
-const THR = 0.45;
-const HOLE_THR = 0.55;
-
-/** 返回 0=暗格 1=亮格 2=暗洞（眼斑） */
-export function computePandaMask(cols: number, rows: number): number[][] {
-  const ss = 12;
-  const w = cols * ss;
-  const h = rows * ss;
-  const scale = (HFRAC * h) / CONTENT_H;
-  const ccx = w / 2;
-  const ccy = CY * h;
-  const cir = (x: number, y: number, c: number[]) =>
-    (x - c[0]) ** 2 + (y - c[1]) ** 2 <= c[2] * c[2];
-  const ell = (x: number, y: number) =>
-    ((x - HEAD[0]) / HEAD[2]) ** 2 + ((y - HEAD[1]) / HEAD[3]) ** 2 <= 1;
-  const cls = (u: number, v: number) => {
-    const x = CENTER_X + (u - ccx) / scale;
-    const y = CENTER_Y + (v - ccy) / scale;
-    if (!(EARS.some((e) => cir(x, y, e)) || ell(x, y))) return 0;
-    return LENS.some((l) => cir(x, y, l)) ? 2 : 1;
-  };
-  const mask: number[][] = [];
-  for (let r = 0; r < rows; r++) {
-    const row: number[] = [];
-    for (let c = 0; c < cols; c++) {
-      const cnt = [0, 0, 0];
-      for (let i = 0; i < ss; i++) {
-        for (let j = 0; j < ss; j++) {
-          cnt[cls(c * ss + i + 0.5, r * ss + j + 0.5)] += 1;
-        }
-      }
-      const total = ss * ss;
-      row.push(
-        cnt[2] / total >= HOLE_THR ? 2 : cnt[1] / total >= THR ? 1 : 0
-      );
-    }
-    mask.push(row);
-  }
-  return mask;
-}
+/* 熊猫遮罩见 ./PandaMask（独立纯函数模块，便于组件与单测共用） */
 
 /* ================= 场景构建 ================= */
 /** Reanimated 的 Easing.bezier 返回的是「缓动工厂」，withTiming 直接接受 */
@@ -260,7 +207,7 @@ function buildScene(
     lastIn +
     (mode === "A" ? 560 : mode === "D" ? 520 : mode === "B" ? 460 : 420);
 
-  // 拼图（morph）起点：B 固定 1000ms；D 在飞入结束后 260ms（绝对时间，与预览一致）
+  // 拼图（morph）起点：B 固定 1000ms；D 在飞入结束后 260ms（绝对时间）
   if (mask) {
     const morphBase = mode === "B" ? 1000 : over + 260;
     for (let i = 0; i < N; i++) {
@@ -411,17 +358,14 @@ const Tile = React.memo(function Tile({ cfg, winkVal }: TileProps) {
   );
 });
 
-/* ================= 主体 ================= */
-interface SplashProps {
+/* ================= 照片墙场景（四模式） ================= */
+interface WallSceneProps {
+  mode: SplashMode;
+  sources: ImageSourcePropType[];
   onDone: () => void;
 }
 
-interface ImplProps extends SplashProps {
-  mode: SplashMode;
-  sources: ImageSourcePropType[];
-}
-
-function PhotoWallSplashImpl({ mode, onDone, sources }: ImplProps) {
+function WallScene({ mode, sources, onDone }: WallSceneProps) {
   const { width, height } = useWindowDimensions();
   const scene = useMemo(
     () => buildScene(mode, width, height, sources),
@@ -573,40 +517,67 @@ function PhotoWallSplashImpl({ mode, onDone, sources }: ImplProps) {
   );
 }
 
-/** 入口：启动时随机挑一个模式；照片源 = 服务器同步集 > 内置集 */
-export default function PhotoWallSplash({ onDone }: SplashProps) {
+/* ================= 等待帧（黑底静态，与 native splash 视觉连续） ================= */
+function BootFrame() {
+  return (
+    <View style={[StyleSheet.absoluteFill, styles.root, styles.boot]}>
+      <Image
+        source={require("../assets/images/splash-logo.png")}
+        style={styles.bootLogo}
+        resizeMode="contain"
+      />
+      <Text style={styles.bootText}>正在准备照片…</Text>
+    </View>
+  );
+}
+
+/* ================= 决策层 ================= */
+type Boot =
+  | { kind: "loading" }
+  | { kind: "panda" }
+  | { kind: "wall"; sources: ImageSourcePropType[] };
+
+export default function PhotoWallSplash({ onDone }: { onDone: () => void }) {
   const mode = useMemo<SplashMode>(
     () => SPLASH_MODES[Math.floor(Math.random() * SPLASH_MODES.length)],
     []
   );
-  const [sources, setSources] = useState<ImageSourcePropType[] | null>(null);
+  const [boot, setBoot] = useState<Boot>({ kind: "loading" });
+
+  // 首帧渲染完成后隐藏 native splash（避免窗口露白）
+  useEffect(() => {
+    SplashScreen.hideAsync().catch(() => {});
+  }, []);
 
   useEffect(() => {
     let alive = true;
-    loadWallPhotoSources()
-      .then((s) => {
-        if (alive) setSources(s);
-      })
-      .catch(() => {
-        if (alive) setSources(PHOTOS);
-      });
+    (async () => {
+      try {
+        const eligible = await isWallEligible();
+        if (!alive) return;
+        if (!eligible) {
+          setBoot({ kind: "panda" });
+          return;
+        }
+        const sources = await resolveWallPhotos();
+        if (!alive) return;
+        if (sources && sources.length > 0) {
+          setBoot({ kind: "wall", sources });
+        } else {
+          setBoot({ kind: "panda" });
+        }
+      } catch {
+        if (alive) setBoot({ kind: "panda" });
+      }
+    })();
     return () => {
       alive = false;
     };
   }, []);
 
-  // 无照片素材时直接放行（保护入口，不阻塞 app）
-  useEffect(() => {
-    if (sources && sources.length === 0) onDone();
-  }, [sources, onDone]);
-
-  if (sources === null) {
-    // 读本地同步状态的一瞬间（通常 <30ms），先给黑场
-    return <View style={styles.root} />;
-  }
-  if (sources.length === 0) return null;
-
-  return <PhotoWallSplashImpl key={mode} mode={mode} sources={sources} onDone={onDone} />;
+  if (boot.kind === "loading") return <BootFrame />;
+  if (boot.kind === "panda") return <PandaSplash onDone={onDone} />;
+  return <WallScene key={mode} mode={mode} sources={boot.sources} onDone={onDone} />;
 }
 
 /* ================= 样式 ================= */
@@ -615,6 +586,22 @@ const styles = StyleSheet.create({
     backgroundColor: BG,
     zIndex: 999,
     elevation: 999,
+  },
+  boot: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  bootLogo: {
+    width: 220,
+    height: 220,
+    opacity: 0.9,
+  },
+  bootText: {
+    marginTop: 26,
+    color: CREAM,
+    fontSize: 16,
+    letterSpacing: 4,
+    opacity: 0.35,
   },
   tile: {
     position: "absolute",

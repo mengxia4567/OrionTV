@@ -14,7 +14,6 @@ import useAuthStore from "@/stores/authStore";
 import { useUpdateStore, initUpdateStore } from "@/stores/updateStore";
 import { UpdateModal } from "@/components/UpdateModal";
 import PhotoWallSplash from "@/components/PhotoWallSplash";
-import { syncWallPhotos } from "@/services/wallPhotos";
 import { UPDATE_CONFIG } from "@/constants/UpdateConfig";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import Logger from '@/utils/Logger';
@@ -26,13 +25,6 @@ SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   const [splashDone, setSplashDone] = useState(false);
-
-  // 启动完成后台同步「照片墙」照片集（失败静默；同步完成后下次启动生效）
-  useEffect(() => {
-    if (splashDone) {
-      syncWallPhotos();
-    }
-  }, [splashDone]);
   const colorScheme = "dark";
   const [loaded, error] = useFonts({
     SpaceMono: require("../assets/fonts/SpaceMono-Regular.ttf"),
@@ -71,12 +63,17 @@ export default function RootLayout() {
   }, [checkLoginStatus]);
 
   useEffect(() => {
-    if (loaded || error) {
-      SplashScreen.hideAsync();
-      if (error) {
-        logger.warn(`Error in loading fonts: ${error}`);
-      }
+    if (!(loaded || error)) {
+      return;
     }
+    if (error) {
+      logger.warn(`Error in loading fonts: ${error}`);
+    }
+    // native splash 由 PhotoWallSplash 首帧渲染后隐藏（避免窗口露白）；这里仅做 5 秒兜底
+    const timer = setTimeout(() => {
+      SplashScreen.hideAsync().catch(() => {});
+    }, 5000);
+    return () => clearTimeout(timer);
   }, [loaded, error]);
 
   // 检查更新
@@ -132,5 +129,6 @@ export default function RootLayout() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: "#0B0B0C",
   },
 });
