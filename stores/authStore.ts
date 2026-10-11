@@ -1,7 +1,12 @@
 import { create } from "zustand";
 import { api, getStoredAuthToken } from "@/services/api";
 import { useSettingsStore } from "./settingsStore";
-import { LoginCredentialsManager } from "@/services/storage";
+import {
+  LoginCredentialsManager,
+  PlayRecordManager,
+  FavoriteManager,
+  SearchHistoryManager,
+} from "@/services/storage";
 import Toast from "react-native-toast-message";
 import Logger from "@/utils/Logger";
 
@@ -125,6 +130,11 @@ const useAuthStore = create<AuthState>((set) => ({
     }
     // 主动退出：清除已保存凭据，避免下次启动被自动登录回来
     await LoginCredentialsManager.clear();
+    // 清除本机缓存（播放记录/收藏/搜索历史）——防止换账号登录后串号显示；
+    // 服务器数据按账号隔离，重新登录会重新拉取
+    await PlayRecordManager.clearLocalCache();
+    await FavoriteManager.clearLocalCache();
+    await SearchHistoryManager.clearLocalCache();
     set({ isLoggedIn: false, isLoginModalVisible: true });
   },
 }));

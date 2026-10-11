@@ -171,6 +171,15 @@ export class FavoriteManager {
     }
     await api.deleteFavorite();
   }
+
+  /** 仅清除本机缓存（不动服务器数据），用于退出登录/切换账号时防止串号显示 */
+  static async clearLocalCache(): Promise<void> {
+    try {
+      await AsyncStorage.removeItem(STORAGE_KEYS.FAVORITES);
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 // --- PlayRecordManager (Dynamic: API or LocalStorage) ---
@@ -272,6 +281,15 @@ export class PlayRecordManager {
       await api.deletePlayRecord();
     }
   }
+
+  /** 仅清除本机缓存（不动服务器数据），用于退出登录/切换账号时防止串号显示 */
+  static async clearLocalCache(): Promise<void> {
+    try {
+      await AsyncStorage.removeItem(STORAGE_KEYS.PLAY_RECORDS);
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 // --- SearchHistoryManager (Dynamic: API or LocalStorage) ---
@@ -312,6 +330,15 @@ export class SearchHistoryManager {
       return;
     }
     await api.deleteSearchHistory();
+  }
+
+  /** 仅清除本机缓存（不动服务器数据），用于退出登录/切换账号时防止串号显示 */
+  static async clearLocalCache(): Promise<void> {
+    try {
+      await AsyncStorage.removeItem(STORAGE_KEYS.SEARCH_HISTORY);
+    } catch {
+      /* ignore */
+    }
   }
 }
 

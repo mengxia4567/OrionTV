@@ -317,7 +317,7 @@ export class API {
       return originalUrl;
     }
     const encoded = encodeURIComponent(originalUrl);
-    // 优先使用「播放代理」设置（如直连 162：https://live.121214.xyz + 代理令牌）
+    // 优先使用「播放代理」设置（设置中自行填写地址与令牌，仓库不预置域名）
     if (this.vodProxyUrl) {
       const t = this.vodProxyToken ? `&t=${encodeURIComponent(this.vodProxyToken)}` : "";
       // .m3u8 结尾：ExoPlayer 依据路径扩展名识别 HLS；/api/proxy/vod/m3u8 不含扩展名会被当作普通视频解析而失败

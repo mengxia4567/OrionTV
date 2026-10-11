@@ -1,14 +1,14 @@
 /**
  * 照片墙 · 运行时照片源 v4
  *
- * 链路：43 发布器（/data/picture → /data/wall-photos，cron 每 5 分钟）
- *   → 162 同步（cron 每 5 分钟拉取，/opt/wall-photos）
- *   → nginx https://live.121214.xyz/wall/（国内直连 162，登录令牌本地校验，无授权 401）
- *   → 备用 https://live.137621.xyz/wall/（43，登录态复验）
+ * 链路（地址均由设置推导，仓库不预置任何具体域名）：
+ *   - 「播放代理地址」（设置项，建议填国内直连的加速入口）优先：<代理地址>/wall
+ *   - 「服务器地址」（设置项）：<服务器地址>/wall 兜底
+ *   服务端（发布器 → 静态目录 → nginx /wall/，登录令牌校验，无授权 401）
  *   → App 启动：**有完整缓存立即渲染（零等待）**；后台静默刷新，新照片下次启动生效
  *
  * v4（2026-10-11）：
- *   ① 主链路切到 162（国内直连，速度 ~10 倍于经 CF 的 43）；43 保留为备用
+ *   ① 主链路改为设置中的「播放代理地址」（未配置时走「服务器地址」）
  *   ② 缓存优先：complete 缓存直接使用，启动不再等待网络；首次/不完整才同步等待
  *   ③ 沿用 v3 的 401 自愈 / 超时预算 / 失败原因上报
  */
@@ -17,11 +17,23 @@ import * as FileSystem from "expo-file-system";
 import { SettingsManager } from "@/services/storage";
 import { api, getStoredAuthToken } from "@/services/api";
 
-/** 主：162（国内直连，快）；备：43（经 CF，慢但兜底） */
-const BASE_URLS = [
-  "https://live.121214.xyz/wall",
-  "https://live.137621.xyz/wall",
-];
+/**
+ * 照片墙地址由设置推导（仓库不预置具体域名）：
+ *   「播放代理地址」优先（通常是国内直连的加速入口），其次「服务器地址」兜底。
+ */
+async function getWallBases(): Promise<string[]> {
+  const bases: string[] = [];
+  try {
+    const s = await SettingsManager.get();
+    const proxy = (s?.vodProxyUrl || "").trim().replace(/\/+$/, "");
+    if (proxy) bases.push(`${proxy}/wall`);
+    const apiBase = (s?.apiBaseUrl || "").trim().replace(/\/+$/, "");
+    if (apiBase) bases.push(`${apiBase}/wall`);
+  } catch {
+    /* ignore */
+  }
+  return Array.from(new Set(bases));
+}
 const WALL_DIR = (FileSystem.documentDirectory ?? "") + "wall/";
 const STATE_FILE = WALL_DIR + "state.json";
 const MANIFEST_TIMEOUT_MS = 7000;
@@ -106,10 +118,11 @@ interface ManifestResult {
   base?: string;
 }
 
-/** 依次尝试 BASE_URLS，返回第一个成功（200）或最先出现的 401；全失败返回 -1 */
+/** 依次尝试推导出的地址，返回第一个成功（200）或最先出现的 401；全失败返回 -1 */
 async function fetchManifest(): Promise<ManifestResult> {
   let lastStatus = -1;
-  for (const base of BASE_URLS) {
+  const bases = await getWallBases();
+  for (const base of bases) {
     try {
       const headers = await authHeaders();
       const ctrl = new AbortController();

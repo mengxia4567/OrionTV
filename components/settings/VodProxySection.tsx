@@ -62,7 +62,7 @@ export const VodProxySection = forwardRef<VodProxySectionRef, VodProxySectionPro
         <View style={styles.container}>
           <ThemedText style={styles.sectionTitle}>播放代理（可选）</ThemedText>
           <ThemedText style={styles.subtitle}>
-            留空 = 走服务器自带代理；填写后点播流直接经该地址代理（如 https://live.121214.xyz）
+            留空 = 走服务器自带代理；填写后点播流直接经该地址代理（填你自己的加速入口地址）
           </ThemedText>
           <TextInput
             ref={urlRef}
@@ -72,7 +72,7 @@ export const VodProxySection = forwardRef<VodProxySectionRef, VodProxySectionPro
               setVodProxyUrl(v);
               onChanged();
             }}
-            placeholder="代理地址，如 https://live.121214.xyz"
+            placeholder="代理地址，如 https://proxy.example.com"
             placeholderTextColor="#888"
             autoCapitalize="none"
             autoCorrect={false}
