@@ -330,6 +330,45 @@ export class API {
     return `${this.baseURL}/api/proxy/vod/playlist.m3u8?url=${encoded}`;
   }
 
+  // ===== 音乐（MoonTVPlus 音乐模块；后端在服务器侧配置，App 无需额外设置） =====
+  async musicSearch(q: string, source = "kw", limit = 40): Promise<any> {
+    const response = await this._fetch(
+      `/api/music/v2/search?q=${encodeURIComponent(q)}&source=${source}&type=song&page=1&limit=${limit}`
+    );
+    return response.json();
+  }
+
+  async musicHotSearch(source = "kw"): Promise<any> {
+    const response = await this._fetch(
+      `/api/music/v2/discovery/hot-search?source=${source}`
+    );
+    return response.json();
+  }
+
+  /** 构建音乐流地址（expo-av 播放时需另附 Authorization 头） */
+  buildMusicStreamUrl(
+    song: {
+      source: string;
+      songId: string;
+      songmid?: string;
+      name?: string;
+      artist?: string;
+      durationText?: string;
+    },
+    quality = "320k"
+  ): string {
+    const parts = [
+      `source=${encodeURIComponent(song.source)}`,
+      `songId=${encodeURIComponent(song.songId)}`,
+      song.songmid ? `songmid=${encodeURIComponent(song.songmid)}` : "",
+      song.name ? `name=${encodeURIComponent(song.name)}` : "",
+      song.artist ? `artist=${encodeURIComponent(song.artist)}` : "",
+      song.durationText ? `durationText=${encodeURIComponent(song.durationText)}` : "",
+      `quality=${encodeURIComponent(quality)}`,
+    ].filter(Boolean);
+    return `${this.baseURL}/api/music/v2/stream?${parts.join("&")}`;
+  }
+
   async getDoubanData(
     type: "movie" | "tv",
     tag: string,

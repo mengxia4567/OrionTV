@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, StyleSheet, TouchableOpacity } from 'react-native';
 import { useRouter, usePathname } from 'expo-router';
-import { Home, Heart, Search, Settings, Tv } from 'lucide-react-native';
+import { Home, Heart, Search, Settings, Tv, Music } from 'lucide-react-native';
 import { ThemedText } from '@/components/ThemedText';
 import { useResponsiveLayout } from '@/hooks/useResponsiveLayout';
 import { DeviceUtils } from '@/utils/DeviceUtils';
@@ -25,6 +25,12 @@ const navigationItems: NavigationItem[] = [
     label: '直播',
     icon: Tv,
     route: '/live',
+  },
+  {
+    name: 'music',
+    label: '音乐',
+    icon: Music,
+    route: '/music',
   },
   {
     name: 'search',
