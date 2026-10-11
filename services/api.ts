@@ -320,12 +320,14 @@ export class API {
     // 优先使用「播放代理」设置（如直连 162：https://live.121214.xyz + 代理令牌）
     if (this.vodProxyUrl) {
       const t = this.vodProxyToken ? `&t=${encodeURIComponent(this.vodProxyToken)}` : "";
-      return `${this.vodProxyUrl}/api/proxy/vod/m3u8?url=${encoded}${t}`;
+      // .m3u8 结尾：ExoPlayer 依据路径扩展名识别 HLS；/api/proxy/vod/m3u8 不含扩展名会被当作普通视频解析而失败
+      return `${this.vodProxyUrl}/api/proxy/vod/playlist.m3u8?url=${encoded}${t}`;
     }
     if (!this.baseURL) {
       return originalUrl;
     }
-    return `${this.baseURL}/api/proxy/vod/m3u8?url=${encoded}`;
+    // .m3u8 结尾：同上下载说明（43 nginx 已同步支持该路径）
+    return `${this.baseURL}/api/proxy/vod/playlist.m3u8?url=${encoded}`;
   }
 
   async getDoubanData(
