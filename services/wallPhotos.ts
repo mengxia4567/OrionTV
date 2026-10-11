@@ -127,6 +127,13 @@ async function downloadAll(
   deadline: number
 ): Promise<string[]> {
   const ok: string[] = [];
+  // 确保目标目录存在：全新安装时 documentDirectory/wall 不存在，
+  // 若不先创建，downloadAsync 会因父目录缺失而全部失败（v1.4.3 及更早的 bug）
+  try {
+    await FileSystem.makeDirectoryAsync(WALL_DIR, { intermediates: true });
+  } catch {
+    /* 目录已存在或创建失败均继续，后续单张失败会自行兜底 */
+  }
   const headers = await authHeaders();
   let idx = 0;
   const worker = async () => {
