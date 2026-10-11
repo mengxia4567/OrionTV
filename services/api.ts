@@ -373,13 +373,12 @@ export let api = new API();
 /** 从代理 URL 还原原始地址（非代理 URL 返回 null）—— 播放失败自愈用 */
 export function unwrapVodProxyUrl(url: string): string | null {
   try {
-    const marker = "/api/proxy/vod/m3u8?url=";
-    const idx = url.indexOf(marker);
-    if (idx < 0) {
+    // 兼容旧路径 /api/proxy/vod/m3u8 与新路径 /api/proxy/vod/playlist.m3u8
+    const m = url.match(/\/api\/proxy\/vod\/(?:playlist\.)?m3u8\?url=([^&]+)/);
+    if (!m) {
       return null;
     }
-    const encoded = url.substring(idx + marker.length).split("&")[0];
-    const decoded = decodeURIComponent(encoded);
+    const decoded = decodeURIComponent(m[1]);
     return decoded.startsWith("http") ? decoded : null;
   } catch {
     return null;
