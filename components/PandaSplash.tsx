@@ -35,9 +35,11 @@ const CORAL = "#FF6B4A";
 
 interface Props {
   onDone: () => void;
+  /** 可选：照片墙回退原因（底部小字，便于定位问题） */
+  debugText?: string;
 }
 
-export default function PandaSplash({ onDone }: Props) {
+export default function PandaSplash({ onDone, debugText }: Props) {
   const { width, height } = useWindowDimensions();
   const logoSize = useMemo(
     () => Math.min(width * 0.34, height * 0.42, 400),
@@ -116,6 +118,7 @@ export default function PandaSplash({ onDone }: Props) {
           </Text>
         </Animated.View>
         <Animated.Text style={[styles.hint, hintStyle]}>按确认键跳过</Animated.Text>
+        {debugText ? <Text style={styles.debug}>{debugText}</Text> : null}
       </Pressable>
     </Animated.View>
   );
@@ -148,5 +151,15 @@ const styles = StyleSheet.create({
     color: CREAM,
     fontSize: 14,
     letterSpacing: 3,
+  },
+  debug: {
+    position: "absolute",
+    bottom: 16,
+    left: 0,
+    right: 0,
+    textAlign: "center",
+    color: "#8A8A93",
+    fontSize: 12,
+    letterSpacing: 1,
   },
 });

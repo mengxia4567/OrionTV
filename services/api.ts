@@ -121,6 +121,18 @@ export class API {
     this.onAuthRecovery = handler;
   }
 
+  /** 供非 _fetch 链路（照片墙等）在遇到 401 时主动触发一次会话自愈（续期 → 静默重登） */
+  public async triggerAuthRecovery(): Promise<boolean> {
+    if (!this.onAuthRecovery) {
+      return false;
+    }
+    try {
+      return await this.onAuthRecovery();
+    } catch {
+      return false;
+    }
+  }
+
   private async _fetch(
     url: string,
     options: RequestInit & { skipAuth?: boolean; skipRecovery?: boolean } = {},

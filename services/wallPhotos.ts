@@ -1,30 +1,43 @@
 /**
- * 照片墙 · 运行时照片源（登录令牌校验 + 服务端动态照片）v2
+ * 照片墙 · 运行时照片源 v3
  *
- * 链路：43 发布器（/data/picture 原图 → /data/wall-photos 缩略图 + manifest，cron 每 5 分钟）
+ * 链路：43 发布器（/data/picture → /data/wall-photos，cron 每 5 分钟）
  *   → nginx https://live.137621.xyz/wall/（auth_request 复验 MoonTV 登录态，无授权 401）
  *   → App 启动时凭「登录令牌」拉 manifest → 增量下载缩略图到本地 → 照片墙用本地文件渲染
  *
- * 资格（不满足则回退熊猫动画）：
- *   - 设置里已配置服务器地址（apiBaseUrl）
- *   - 已成功登录（存在登录令牌，getStoredAuthToken）
- *
- * 每次启动都会尝试拉取（超时/失败则用本地已缓存集；首次无缓存则回退熊猫）。
+ * v3（2026-10-11）修复与增强：
+ *   ① 清单 401 时自动触发会话自愈（refresh → 静默重登）并重试一次
+ *      ——修复「登录过但访问令牌过期（4h）→ 一直回退熊猫」的问题；
+ *   ② 超时放宽：清单 9s / 下载总预算 18s / 单文件 12s（国内经 CF 访问较慢）；
+ *   ③ 返回明确失败原因，用于熊猫回退页的小字提示（电视端可据此定位问题）。
  */
 import type { ImageSourcePropType } from "react-native";
 import * as FileSystem from "expo-file-system";
 import { SettingsManager } from "@/services/storage";
-import { getStoredAuthToken } from "@/services/api";
+import { api, getStoredAuthToken } from "@/services/api";
 
 const BASE_URL = "https://live.137621.xyz/wall";
 const WALL_DIR = (FileSystem.documentDirectory ?? "") + "wall/";
 const STATE_FILE = WALL_DIR + "state.json";
-const MANIFEST_TIMEOUT_MS = 3000;
-const REFRESH_BUDGET_MS = 7000;
+const MANIFEST_TIMEOUT_MS = 9000;
+const REFRESH_BUDGET_MS = 18000;
+const FILE_TIMEOUT_MS = 12000;
 const DL_CONCURRENCY = 4;
 
 /** 少于此数量视为不可用（回退熊猫） */
 export const MIN_PHOTOS = 4;
+
+export type WallFailure =
+  | "not-configured"
+  | "not-logged-in"
+  | "auth-401"
+  | "timeout"
+  | "empty"
+  | "fetch-failed";
+
+export type WallResolution =
+  | { kind: "wall"; sources: ImageSourcePropType[] }
+  | { kind: "panda"; reason: WallFailure };
 
 interface WallState {
   updatedAt: number;
@@ -64,24 +77,49 @@ async function writeState(st: WallState): Promise<void> {
   }
 }
 
-/** 是否具备照片墙资格：配置了服务器地址 + 有登录令牌 */
-export async function isWallEligible(): Promise<boolean> {
-  if (!FileSystem.documentDirectory) return false;
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("TIMEOUT")), ms);
+    p.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      }
+    );
+  });
+}
+
+interface ManifestResult {
+  status: number; // 200 / 401 / -1(网络异常或超时)
+  updatedAt?: number;
+  files?: string[];
+}
+
+async function fetchManifest(): Promise<ManifestResult> {
   try {
-    const settings = await SettingsManager.get();
-    if (!settings || !settings.apiBaseUrl) return false;
+    const headers = await authHeaders();
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), MANIFEST_TIMEOUT_MS);
+    const res = await fetch(`${BASE_URL}/manifest.json`, {
+      signal: ctrl.signal,
+      headers: { "Cache-Control": "no-cache", ...headers },
+    });
+    clearTimeout(timer);
+    if (!res.ok) return { status: res.status };
+    const man = (await res.json()) as { updatedAt?: number; files?: string[] };
+    if (!man || !man.updatedAt || !Array.isArray(man.files) || man.files.length === 0) {
+      return { status: 200 };
+    }
+    return { status: 200, updatedAt: man.updatedAt, files: man.files };
   } catch {
-    return false;
-  }
-  try {
-    const token = await getStoredAuthToken();
-    return !!token;
-  } catch {
-    return false;
+    return { status: -1 };
   }
 }
 
-/** 并发受限地下载一批缩略图（带登录令牌；失败单张跳过） */
 async function downloadAll(
   fileNames: string[],
   prefix: string,
@@ -97,9 +135,10 @@ async function downloadAll(
       idx += 1;
       const dst = WALL_DIR + prefix + f;
       try {
-        await FileSystem.downloadAsync(`${BASE_URL}/${f}?v=${updatedAt}`, dst, {
-          headers,
-        });
+        await withTimeout(
+          FileSystem.downloadAsync(`${BASE_URL}/${f}?v=${updatedAt}`, dst, { headers }),
+          FILE_TIMEOUT_MS
+        );
         ok.push(prefix + f);
       } catch {
         /* 单张失败继续 */
@@ -112,55 +151,84 @@ async function downloadAll(
   return ok;
 }
 
+function toSources(files: string[] | undefined | null): ImageSourcePropType[] | null {
+  if (!files || files.length < MIN_PHOTOS) return null;
+  return files.map((f) => ({ uri: WALL_DIR + f }));
+}
+
 /**
- * 启动时刷新照片集。返回可用文件名列表（带版本前缀）；不可用返回 null。
+ * 启动时解析照片墙结果：
+ *   - 资格不足（未配置/未登录）→ panda + 原因
+ *   - 拉取成功或有可用缓存 → wall
+ *   - 其余 → panda + 原因
  */
-export async function refreshWallPhotos(): Promise<string[] | null> {
-  if (!FileSystem.documentDirectory) return null;
+export async function resolveWall(): Promise<WallResolution> {
+  if (!FileSystem.documentDirectory) {
+    return { kind: "panda", reason: "fetch-failed" };
+  }
+
+  // 1) 资格：已配置服务器地址 + 已登录（有令牌）
+  let apiBaseUrl = "";
+  try {
+    const s = await SettingsManager.get();
+    apiBaseUrl = s?.apiBaseUrl ?? "";
+  } catch {
+    apiBaseUrl = "";
+  }
+  if (!apiBaseUrl) return { kind: "panda", reason: "not-configured" };
+  try {
+    const token = await getStoredAuthToken();
+    if (!token) return { kind: "panda", reason: "not-logged-in" };
+  } catch {
+    return { kind: "panda", reason: "not-logged-in" };
+  }
+
   const local = await readState();
 
-  // 1) 拉 manifest（带登录令牌；超时 3s）
-  let man: { updatedAt?: number; files?: string[] } | null = null;
-  try {
-    const headers = await authHeaders();
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), MANIFEST_TIMEOUT_MS);
-    const res = await fetch(`${BASE_URL}/manifest.json`, {
-      signal: ctrl.signal,
-      headers: { "Cache-Control": "no-cache", ...headers },
-    });
-    clearTimeout(timer);
-    if (res.ok) {
-      man = (await res.json()) as { updatedAt?: number; files?: string[] };
+  // 2) 拉清单；401 → 会话自愈 → 重试一次
+  let man = await fetchManifest();
+  if (man.status === 401) {
+    const recovered = await api.triggerAuthRecovery();
+    if (recovered) {
+      man = await fetchManifest();
     }
-  } catch {
-    man = null;
   }
-  if (!man || !man.updatedAt || !Array.isArray(man.files) || man.files.length === 0) {
-    // 拉不到 → 用本地缓存
-    return local && local.files.length >= MIN_PHOTOS ? local.files : null;
+  if (man.status === 401) {
+    const cached = toSources(local?.files);
+    return cached ? { kind: "wall", sources: cached } : { kind: "panda", reason: "auth-401" };
+  }
+  if (man.status !== 200 || !man.files || !man.updatedAt) {
+    const cached = toSources(local?.files);
+    if (cached) return { kind: "wall", sources: cached };
+    return { kind: "panda", reason: man.status === 200 ? "empty" : "timeout" };
   }
 
-  const deadline = Date.now() + REFRESH_BUDGET_MS;
   const prefix = `v${man.updatedAt}_`;
 
-  // 2) 本地已是当前版本：缺图则补齐
+  // 3) 本地已是当前版本：完整 → 直接用；不完整 → 补齐
   if (local && local.updatedAt === man.updatedAt) {
-    const missing = man.files.filter((f) => !local.files.includes(prefix + f));
-    if (missing.length === 0 || local.complete) {
-      return local.files.length >= MIN_PHOTOS ? local.files : null;
+    if (!local.complete) {
+      const missing = man.files.filter((f) => !local.files.includes(prefix + f));
+      if (missing.length > 0) {
+        const deadline = Date.now() + REFRESH_BUDGET_MS;
+        const gained = await downloadAll(missing, prefix, man.updatedAt, deadline);
+        const merged = Array.from(new Set([...local.files, ...gained]));
+        await writeState({
+          updatedAt: man.updatedAt,
+          files: merged,
+          complete: merged.length >= man.files.length,
+        });
+        const mergedSources = toSources(merged);
+        if (mergedSources) return { kind: "wall", sources: mergedSources };
+        return { kind: "panda", reason: "fetch-failed" };
+      }
     }
-    const gained = await downloadAll(missing, prefix, man.updatedAt, deadline);
-    const merged = Array.from(new Set([...local.files, ...gained]));
-    await writeState({
-      updatedAt: man.updatedAt,
-      files: merged,
-      complete: merged.length >= man.files.length,
-    });
-    return merged.length >= MIN_PHOTOS ? merged : null;
+    const cached = toSources(local.files);
+    if (cached) return { kind: "wall", sources: cached };
   }
 
-  // 3) 新版本：全量下载
+  // 4) 新版本：全量下载
+  const deadline = Date.now() + REFRESH_BUDGET_MS;
   const gained = await downloadAll(man.files, prefix, man.updatedAt, deadline);
   if (gained.length >= MIN_PHOTOS) {
     await writeState({
@@ -179,16 +247,9 @@ export async function refreshWallPhotos(): Promise<string[] | null> {
     } catch {
       /* ignore */
     }
-    return gained;
+    return { kind: "wall", sources: gained.map((f) => ({ uri: WALL_DIR + f })) };
   }
-
-  // 新版本下载失败 → 尽量退回旧缓存
-  return local && local.files.length >= MIN_PHOTOS ? local.files : null;
-}
-
-/** 给出可渲染的图片源（照片墙决策层用）；不可用返回 null */
-export async function resolveWallPhotos(): Promise<ImageSourcePropType[] | null> {
-  const files = await refreshWallPhotos();
-  if (!files || files.length === 0) return null;
-  return files.map((f) => ({ uri: WALL_DIR + f }));
+  const cached = toSources(local?.files);
+  if (cached) return { kind: "wall", sources: cached };
+  return { kind: "panda", reason: "fetch-failed" };
 }

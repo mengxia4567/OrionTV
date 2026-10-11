@@ -36,7 +36,7 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import * as SplashScreen from "expo-splash-screen";
-import { isWallEligible, resolveWallPhotos } from "@/services/wallPhotos";
+import { resolveWall } from "@/services/wallPhotos";
 import PandaSplash from "@/components/PandaSplash";
 import { computePandaMask } from "./PandaMask";
 
@@ -56,6 +56,16 @@ const EASE_MORPH = Easing.bezier(0.35, 0.9, 0.3, 1);
 
 export type SplashMode = "A" | "B" | "C" | "D";
 export const SPLASH_MODES: SplashMode[] = ["A", "B", "C", "D"];
+
+/** 熊猫回退原因（小字提示，便于电视端定位问题） */
+const REASON_TEXT: Record<string, string> = {
+  "not-configured": "照片墙未启用：未配置服务器地址",
+  "not-logged-in": "照片墙未启用：未登录",
+  "auth-401": "照片墙未启用：登录已过期（认证失败）",
+  timeout: "照片墙未启用：获取超时 / 网络异常",
+  empty: "照片墙未启用：服务器暂无照片",
+  "fetch-failed": "照片墙未启用：获取照片失败",
+};
 
 /* 熊猫遮罩见 ./PandaMask（独立纯函数模块，便于组件与单测共用） */
 
@@ -534,7 +544,7 @@ function BootFrame() {
 /* ================= 决策层 ================= */
 type Boot =
   | { kind: "loading" }
-  | { kind: "panda" }
+  | { kind: "panda"; reason?: string }
   | { kind: "wall"; sources: ImageSourcePropType[] };
 
 export default function PhotoWallSplash({ onDone }: { onDone: () => void }) {
@@ -553,21 +563,15 @@ export default function PhotoWallSplash({ onDone }: { onDone: () => void }) {
     let alive = true;
     (async () => {
       try {
-        const eligible = await isWallEligible();
+        const res = await resolveWall();
         if (!alive) return;
-        if (!eligible) {
-          setBoot({ kind: "panda" });
-          return;
-        }
-        const sources = await resolveWallPhotos();
-        if (!alive) return;
-        if (sources && sources.length > 0) {
-          setBoot({ kind: "wall", sources });
+        if (res.kind === "wall") {
+          setBoot({ kind: "wall", sources: res.sources });
         } else {
-          setBoot({ kind: "panda" });
+          setBoot({ kind: "panda", reason: res.reason });
         }
       } catch {
-        if (alive) setBoot({ kind: "panda" });
+        if (alive) setBoot({ kind: "panda", reason: "fetch-failed" });
       }
     })();
     return () => {
@@ -576,7 +580,14 @@ export default function PhotoWallSplash({ onDone }: { onDone: () => void }) {
   }, []);
 
   if (boot.kind === "loading") return <BootFrame />;
-  if (boot.kind === "panda") return <PandaSplash onDone={onDone} />;
+  if (boot.kind === "panda") {
+    return (
+      <PandaSplash
+        onDone={onDone}
+        debugText={boot.reason ? REASON_TEXT[boot.reason] : undefined}
+      />
+    );
+  }
   return <WallScene key={mode} mode={mode} sources={boot.sources} onDone={onDone} />;
 }
 
