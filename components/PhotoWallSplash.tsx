@@ -400,9 +400,9 @@ function WallScene({ mode, sources, onDone }: WallSceneProps) {
         s.over + 120,
         withTiming(1, { duration: 1900, easing: Easing.inOut(Easing.quad) })
       );
-      wp.value = withDelay(s.over + 1650, withTiming(1, { duration: 560, easing: EASE_OUT }));
+      wp.value = withDelay(s.over + 3000, withTiming(1, { duration: 560, easing: EASE_OUT }));
       fade.value = withDelay(
-        s.over + 2450,
+        s.over + 4500,
         withTiming(1, { duration: 420, easing: Easing.in(Easing.quad) }, (f) => {
           if (f) {
             runOnJS(finish)();
@@ -411,15 +411,15 @@ function WallScene({ mode, sources, onDone }: WallSceneProps) {
       );
     } else if (mode === "B") {
       winkVal.value = withDelay(
-        1850,
+        2850,
         withSequence(
           withTiming(1, { duration: 140, easing: Easing.out(Easing.quad) }),
           withDelay(180, withTiming(0, { duration: 260 }))
         )
       );
-      wp.value = withDelay(2300, withTiming(1, { duration: 560, easing: EASE_OUT }));
+      wp.value = withDelay(3300, withTiming(1, { duration: 560, easing: EASE_OUT }));
       fade.value = withDelay(
-        3150,
+        5150,
         withTiming(1, { duration: 420, easing: Easing.in(Easing.quad) }, (f) => {
           if (f) {
             runOnJS(finish)();
@@ -431,9 +431,9 @@ function WallScene({ mode, sources, onDone }: WallSceneProps) {
         2500,
         withTiming(1, { duration: 900, easing: Easing.inOut(Easing.quad) })
       );
-      wp.value = withDelay(2650, withTiming(1, { duration: 560, easing: EASE_OUT }));
+      wp.value = withDelay(3650, withTiming(1, { duration: 560, easing: EASE_OUT }));
       fade.value = withDelay(
-        3450,
+        5450,
         withTiming(1, { duration: 420, easing: Easing.in(Easing.quad) }, (f) => {
           if (f) {
             runOnJS(finish)();
@@ -442,15 +442,15 @@ function WallScene({ mode, sources, onDone }: WallSceneProps) {
       );
     } else {
       winkVal.value = withDelay(
-        s.over + 1150,
+        s.over + 2150,
         withSequence(
           withTiming(1, { duration: 140, easing: Easing.out(Easing.quad) }),
           withDelay(180, withTiming(0, { duration: 260 }))
         )
       );
-      wp.value = withDelay(s.over + 1550, withTiming(1, { duration: 560, easing: EASE_OUT }));
+      wp.value = withDelay(s.over + 3000, withTiming(1, { duration: 560, easing: EASE_OUT }));
       fade.value = withDelay(
-        s.over + 2500,
+        s.over + 4500,
         withTiming(1, { duration: 420, easing: Easing.in(Easing.quad) }, (f) => {
           if (f) {
             runOnJS(finish)();
@@ -459,7 +459,7 @@ function WallScene({ mode, sources, onDone }: WallSceneProps) {
       );
     }
     // 兜底：异常情况下 9 秒强制结束，绝不卡死入口
-    const guard = setTimeout(finish, 9000);
+    const guard = setTimeout(finish, 15000);
     return () => clearTimeout(guard);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -528,7 +528,7 @@ function WallScene({ mode, sources, onDone }: WallSceneProps) {
 }
 
 /* ================= 等待帧（黑底静态，与 native splash 视觉连续） ================= */
-function BootFrame() {
+function BootFrame({ onSkip }: { onSkip?: () => void }) {
   return (
     <View style={[StyleSheet.absoluteFill, styles.root, styles.boot]}>
       <Image
@@ -537,6 +537,15 @@ function BootFrame() {
         resizeMode="contain"
       />
       <Text style={styles.bootText}>正在准备照片…</Text>
+      <Text style={styles.bootHint}>按确认键跳过</Text>
+      {onSkip ? (
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={onSkip}
+          focusable
+          {...(Platform.isTV ? { hasTVPreferredFocus: true } : {})}
+        />
+      ) : null}
     </View>
   );
 }
@@ -553,6 +562,14 @@ export default function PhotoWallSplash({ onDone }: { onDone: () => void }) {
     []
   );
   const [boot, setBoot] = useState<Boot>({ kind: "loading" });
+  const skippedRef = useRef(false);
+
+  // 等待帧可跳过：按确认键直接进入应用
+  const skipAll = useCallback(() => {
+    if (skippedRef.current) return;
+    skippedRef.current = true;
+    onDone();
+  }, [onDone]);
 
   // 首帧渲染完成后隐藏 native splash（避免窗口露白）
   useEffect(() => {
@@ -564,7 +581,7 @@ export default function PhotoWallSplash({ onDone }: { onDone: () => void }) {
     (async () => {
       try {
         const res = await resolveWall();
-        if (!alive) return;
+        if (!alive || skippedRef.current) return;
         if (res.kind === "wall") {
           setBoot({ kind: "wall", sources: res.sources });
         } else {
@@ -579,7 +596,7 @@ export default function PhotoWallSplash({ onDone }: { onDone: () => void }) {
     };
   }, []);
 
-  if (boot.kind === "loading") return <BootFrame />;
+  if (boot.kind === "loading") return <BootFrame onSkip={skipAll} />;
   if (boot.kind === "panda") {
     return (
       <PandaSplash
@@ -613,6 +630,17 @@ const styles = StyleSheet.create({
     fontSize: 16,
     letterSpacing: 4,
     opacity: 0.35,
+  },
+  bootHint: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 24,
+    textAlign: "center",
+    color: CREAM,
+    fontSize: 14,
+    letterSpacing: 3,
+    opacity: 0.28,
   },
   tile: {
     position: "absolute",

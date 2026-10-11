@@ -10,6 +10,7 @@ import { useSettingsStore } from "@/stores/settingsStore";
 // import useAuthStore from "@/stores/authStore";
 import { useRemoteControlStore } from "@/stores/remoteControlStore";
 import { APIConfigSection } from "@/components/settings/APIConfigSection";
+import { VodProxySection, VodProxySectionRef } from "@/components/settings/VodProxySection";
 import { LiveStreamSection } from "@/components/settings/LiveStreamSection";
 import { RemoteInputSection } from "@/components/settings/RemoteInputSection";
 import { UpdateSection } from "@/components/settings/UpdateSection";
@@ -52,6 +53,7 @@ export default function SettingsScreen() {
 
   const saveButtonRef = useRef<any>(null);
   const apiSectionRef = useRef<any>(null);
+  const vodProxySectionRef = useRef<VodProxySectionRef>(null);
   const liveStreamSectionRef = useRef<any>(null);
 
   useEffect(() => {
@@ -76,6 +78,9 @@ export default function SettingsScreen() {
     } else if (currentSection === "livestream" && liveStreamSectionRef.current) {
       // Live Stream Section
       setM3uUrl(message);
+    } else if (currentSection === "vodproxy" && vodProxySectionRef.current) {
+      // 播放代理配置（写入当前聚焦的输入框）
+      vodProxySectionRef.current.applyRemoteText(message);
     }
   };
 
@@ -185,13 +190,26 @@ export default function SettingsScreen() {
       ),
       key: "api",
     },
+    {
+      component: (
+        <VodProxySection
+          ref={vodProxySectionRef}
+          onChanged={markAsChanged}
+          onFocus={() => {
+            setCurrentFocusIndex(2);
+            setCurrentSection("vodproxy");
+          }}
+        />
+      ),
+      key: "vodproxy",
+    },
     deviceType !== "mobile" && {
       component: (
         <LiveStreamSection
           ref={liveStreamSectionRef}
           onChanged={markAsChanged}
           onFocus={() => {
-            setCurrentFocusIndex(2);
+            setCurrentFocusIndex(3);
             setCurrentSection("livestream");
           }}
         />

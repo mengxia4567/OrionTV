@@ -10,6 +10,8 @@ const logger = Logger.withTag('SettingsStore');
 interface SettingsState {
   apiBaseUrl: string;
   m3uUrl: string;
+  vodProxyUrl: string;
+  vodProxyToken: string;
   remoteInputEnabled: boolean;
   videoSource: {
     enabledAll: boolean;
@@ -24,6 +26,8 @@ interface SettingsState {
   fetchServerConfig: () => Promise<void>;
   setApiBaseUrl: (url: string) => void;
   setM3uUrl: (url: string) => void;
+  setVodProxyUrl: (url: string) => void;
+  setVodProxyToken: (token: string) => void;
   setRemoteInputEnabled: (enabled: boolean) => void;
   saveSettings: () => Promise<void>;
   setVideoSource: (config: { enabledAll: boolean; sources: { [key: string]: boolean } }) => void;
@@ -34,6 +38,8 @@ interface SettingsState {
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   apiBaseUrl: "",
   m3uUrl: "",
+  vodProxyUrl: "",
+  vodProxyToken: "",
   liveStreamSources: [],
   remoteInputEnabled: false,
   isModalVisible: false,
@@ -48,6 +54,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({
       apiBaseUrl: settings.apiBaseUrl,
       m3uUrl: settings.m3uUrl,
+      vodProxyUrl: settings.vodProxyUrl || "",
+      vodProxyToken: settings.vodProxyToken || "",
       remoteInputEnabled: settings.remoteInputEnabled || false,
       videoSource: settings.videoSource || {
         enabledAll: true,
@@ -58,6 +66,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       api.setBaseUrl(settings.apiBaseUrl);
       await get().fetchServerConfig();
     }
+    api.setVodProxy(settings.vodProxyUrl, settings.vodProxyToken);
   },
   fetchServerConfig: async () => {
     set({ isLoadingServerConfig: true });
@@ -76,10 +85,18 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
   setApiBaseUrl: (url) => set({ apiBaseUrl: url }),
   setM3uUrl: (url) => set({ m3uUrl: url }),
+  setVodProxyUrl: (url) => {
+    set({ vodProxyUrl: url });
+    api.setVodProxy(url, get().vodProxyToken);
+  },
+  setVodProxyToken: (token) => {
+    set({ vodProxyToken: token });
+    api.setVodProxy(get().vodProxyUrl, token);
+  },
   setRemoteInputEnabled: (enabled) => set({ remoteInputEnabled: enabled }),
   setVideoSource: (config) => set({ videoSource: config }),
   saveSettings: async () => {
-    const { apiBaseUrl, m3uUrl, remoteInputEnabled, videoSource } = get();
+    const { apiBaseUrl, m3uUrl, remoteInputEnabled, videoSource, vodProxyUrl, vodProxyToken } = get();
     const currentSettings = await SettingsManager.get()
     const currentApiBaseUrl = currentSettings.apiBaseUrl;
     let processedApiBaseUrl = apiBaseUrl.trim();
@@ -106,12 +123,15 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       m3uUrl,
       remoteInputEnabled,
       videoSource,
+      vodProxyUrl: (vodProxyUrl || "").trim(),
+      vodProxyToken: (vodProxyToken || "").trim(),
     });
     if ( currentApiBaseUrl !== processedApiBaseUrl) {
       await AsyncStorage.setItem('authCookies', '');
       await setStoredAuthToken(null);
     }
     api.setBaseUrl(processedApiBaseUrl);
+    api.setVodProxy(vodProxyUrl, vodProxyToken);
     // Also update the URL in the state so the input field shows the processed URL
     set({ isModalVisible: false, apiBaseUrl: processedApiBaseUrl });
     await get().fetchServerConfig();

@@ -39,6 +39,10 @@ export interface AppSettings {
     };
   };
   m3uUrl: string;
+  /** 点播流代理地址（可选）；为空则走服务器 /api/proxy/vod/m3u8（服务端 302） */
+  vodProxyUrl?: string;
+  /** 点播流代理访问令牌（可选，配合 vodProxyUrl 使用） */
+  vodProxyToken?: string;
 }
 
 export interface LoginCredentials {
@@ -322,6 +326,8 @@ export class SettingsManager {
         sources: {},
       },
       m3uUrl: "",
+      vodProxyUrl: "",
+      vodProxyToken: "",
     };
     try {
       const data = await AsyncStorage.getItem(STORAGE_KEYS.SETTINGS);

@@ -117,6 +117,15 @@ export class API {
     this.baseURL = url;
   }
 
+  /** 点播流代理覆盖（可选）：设置后所有 m3u8 播放地址改为经该地址代理 */
+  private vodProxyUrl = "";
+  private vodProxyToken = "";
+
+  public setVodProxy(url: string | null | undefined, token: string | null | undefined) {
+    this.vodProxyUrl = (url || "").trim().replace(/\/+$/, "");
+    this.vodProxyToken = (token || "").trim();
+  }
+
   public setAuthRecoveryHandler(handler: (() => Promise<boolean>) | null) {
     this.onAuthRecovery = handler;
   }
@@ -300,14 +309,23 @@ export class API {
    * 非 m3u8 / 未配置服务器地址时原样返回。
    */
   getVodProxyUrl(originalUrl: string): string {
-    if (!this.baseURL || !originalUrl) {
+    if (!originalUrl) {
       return originalUrl;
     }
     const lower = originalUrl.toLowerCase();
-    if ((lower.startsWith("http://") || lower.startsWith("https://")) && lower.includes(".m3u8")) {
-      return `${this.baseURL}/api/proxy/vod/m3u8?url=${encodeURIComponent(originalUrl)}`;
+    if (!((lower.startsWith("http://") || lower.startsWith("https://")) && lower.includes(".m3u8"))) {
+      return originalUrl;
     }
-    return originalUrl;
+    const encoded = encodeURIComponent(originalUrl);
+    // 优先使用「播放代理」设置（如直连 162：https://live.121214.xyz + 代理令牌）
+    if (this.vodProxyUrl) {
+      const t = this.vodProxyToken ? `&t=${encodeURIComponent(this.vodProxyToken)}` : "";
+      return `${this.vodProxyUrl}/api/proxy/vod/m3u8?url=${encoded}${t}`;
+    }
+    if (!this.baseURL) {
+      return originalUrl;
+    }
+    return `${this.baseURL}/api/proxy/vod/m3u8?url=${encoded}`;
   }
 
   async getDoubanData(
