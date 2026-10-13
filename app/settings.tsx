@@ -10,9 +10,11 @@ import { useSettingsStore } from "@/stores/settingsStore";
 // import useAuthStore from "@/stores/authStore";
 import { useRemoteControlStore } from "@/stores/remoteControlStore";
 import { APIConfigSection } from "@/components/settings/APIConfigSection";
+import { VodProxySection, VodProxySectionRef } from "@/components/settings/VodProxySection";
 import { LiveStreamSection } from "@/components/settings/LiveStreamSection";
 import { RemoteInputSection } from "@/components/settings/RemoteInputSection";
 import { UpdateSection } from "@/components/settings/UpdateSection";
+import { useBackToHome } from "@/hooks/useBackToHome";
 // import { VideoSourceSection } from "@/components/settings/VideoSourceSection";
 import Toast from "react-native-toast-message";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
@@ -52,7 +54,11 @@ export default function SettingsScreen() {
 
   const saveButtonRef = useRef<any>(null);
   const apiSectionRef = useRef<any>(null);
+  const vodProxySectionRef = useRef<VodProxySectionRef>(null);
   const liveStreamSectionRef = useRef<any>(null);
+
+  // 返回键：回首页，而不是直接退出应用（设置页是顶层导航栈底）
+  useBackToHome();
 
   useEffect(() => {
     loadSettings();
@@ -76,6 +82,9 @@ export default function SettingsScreen() {
     } else if (currentSection === "livestream" && liveStreamSectionRef.current) {
       // Live Stream Section
       setM3uUrl(message);
+    } else if (currentSection === "vodproxy" && vodProxySectionRef.current) {
+      // 播放代理配置（写入当前聚焦的输入框）
+      vodProxySectionRef.current.applyRemoteText(message);
     }
   };
 
@@ -185,13 +194,27 @@ export default function SettingsScreen() {
       ),
       key: "api",
     },
-    deviceType !== "mobile" && {
+    {
+      component: (
+        <VodProxySection
+          ref={vodProxySectionRef}
+          onChanged={markAsChanged}
+          onFocus={() => {
+            setCurrentFocusIndex(2);
+            setCurrentSection("vodproxy");
+          }}
+        />
+      ),
+      key: "vodproxy",
+    },
+    {
+      // 2026-10-11: 手机端也显示直播源配置（原为仅 TV/平板）
       component: (
         <LiveStreamSection
           ref={liveStreamSectionRef}
           onChanged={markAsChanged}
           onFocus={() => {
-            setCurrentFocusIndex(2);
+            setCurrentFocusIndex(3);
             setCurrentSection("livestream");
           }}
         />

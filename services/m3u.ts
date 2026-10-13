@@ -1,7 +1,3 @@
-import Logger from '@/utils/Logger';
-
-const logger = Logger.withTag('M3U');
-
 export interface Channel {
   id: string;
   name: string;
@@ -52,20 +48,6 @@ export const parseM3U = (m3uText: string): Channel[] => {
     }
   }
   return parsedChannels;
-};
-
-export const fetchAndParseM3u = async (m3uUrl: string): Promise<Channel[]> => {
-  try {
-    const response = await fetch(m3uUrl);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch M3U: ${response.statusText}`);
-    }
-    const m3uText = await response.text();
-    return parseM3U(m3uText);
-  } catch (error) {
-    logger.info("Error fetching or parsing M3U:", error);
-    return []; // Return empty array on error
-  }
 };
 
 export const getPlayableUrl = (originalUrl: string | null): string | null => {

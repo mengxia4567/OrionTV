@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 福宝观影：启动屏背景色（应用级覆盖，压过 expo-splash-screen 库的白色默认值） -->
+<resources>
+    <color name="splashscreen_background">#0B0B0C</color>
+</resources>

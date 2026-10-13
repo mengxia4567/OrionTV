@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { View, StyleSheet, TouchableOpacity, Text, Platform } from 'react-native';
 import { useRouter, usePathname } from 'expo-router';
-import { Home, Search, Heart, Settings, Tv } from 'lucide-react-native';
+import { navigateTopLevel } from '@/utils/topLevelNav';
+import { Home, Search, Heart, Settings, Tv, Music } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { useResponsiveLayout } from '@/hooks/useResponsiveLayout';
 import { DeviceUtils } from '@/utils/DeviceUtils';
@@ -17,30 +18,28 @@ const tabs: TabItem[] = [
   { key: 'home', label: '首页', icon: Home, route: '/' },
   { key: 'search', label: '搜索', icon: Search, route: '/search' },
   { key: 'live', label: '直播', icon: Tv, route: '/live' },
+  { key: 'music', label: '音乐', icon: Music, route: '/music' },
   { key: 'favorites', label: '收藏', icon: Heart, route: '/favorites' },
   { key: 'settings', label: '设置', icon: Settings, route: '/settings' },
 ];
 
 interface MobileTabContainerProps {
   children: React.ReactNode;
+  /** 沉浸式全屏时隐藏底栏（保持组件树不变，避免播放器被卸载重建） */
+  hideChrome?: boolean;
 }
 
-const MobileTabContainer: React.FC<MobileTabContainerProps> = ({ children }) => {
+const MobileTabContainer: React.FC<MobileTabContainerProps> = ({ children, hideChrome = false }) => {
   const router = useRouter();
   const pathname = usePathname();
-  const { spacing, deviceType } = useResponsiveLayout();
+  const { spacing } = useResponsiveLayout();
   
-  // 在手机端过滤掉直播 tab
-  const filteredTabs = tabs.filter(tab => 
-    deviceType !== 'mobile' || tab.key !== 'live'
-  );
+  // 2026-10-11: 手机端恢复直播入口（直播页已有移动端布局适配）
+  const filteredTabs = tabs;
   
+  // 顶层 Tab 用 replace 语义，避免反复点击把路由栈越压越深（返回键要弹很多次）
   const handleTabPress = (route: string) => {
-    if (route === '/') {
-      router.push('/');
-    } else {
-      router.push(route as any);
-    }
+    navigateTopLevel(router, route as any, pathname);
   };
 
   const isTabActive = (route: string) => {
@@ -59,7 +58,7 @@ const MobileTabContainer: React.FC<MobileTabContainerProps> = ({ children }) => 
       </View>
       
       {/* 底部导航栏 */}
-      <View style={dynamicStyles.tabBar}>
+      <View style={[dynamicStyles.tabBar, hideChrome && { display: 'none' }]}>
         {filteredTabs.map((tab) => {
           const isActive = isTabActive(tab.route);
           const IconComponent = tab.icon;

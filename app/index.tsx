@@ -5,7 +5,8 @@ import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import { api } from "@/services/api";
 import VideoCard from "@/components/VideoCard";
-import { useFocusEffect, useRouter } from "expo-router";
+import { useFocusEffect, useRouter, usePathname } from "expo-router";
+import { navigateTopLevel } from "@/utils/topLevelNav";
 import { Search, Settings, LogOut, Heart } from "lucide-react-native";
 import { StyledButton } from "@/components/StyledButton";
 import useHomeStore, { RowItem, Category } from "@/stores/homeStore";
@@ -21,6 +22,7 @@ const LOAD_MORE_THRESHOLD = 200;
 
 export default function HomeScreen() {
   const router = useRouter();
+  const pathname = usePathname();
   const colorScheme = "dark";
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -114,6 +116,10 @@ export default function HomeScreen() {
     selectedCategory?.tag,
     apiConfigStatus.isConfigured,
     apiConfigStatus.needsConfiguration,
+    // 登录态变化也要重新拉取：首次打开时 fetchInitialData 可能抢在静默登录完成前
+    // 就跑完并拿到 401（isLoggedIn 还是 false），若不把它放进依赖，首页会一直停
+    // 在那次失败的 error/spinner 状态，直到用户手动切分类才会恢复。
+    isLoggedIn,
     fetchInitialData,
     selectCategory,
   ]);
@@ -200,24 +206,29 @@ export default function HomeScreen() {
       <View style={dynamicStyles.headerContainer}>
         <View style={{ flexDirection: "row", alignItems: "center" }}>
           <ThemedText style={dynamicStyles.headerTitle}>首页</ThemedText>
-          <Pressable android_ripple={Platform.isTV || deviceType !== 'tv'? { color: 'transparent' } : { color: Colors.dark.link }} style={{ marginLeft: 20 }} onPress={() => router.push("/live")}>
+          <Pressable android_ripple={Platform.isTV || deviceType !== 'tv'? { color: 'transparent' } : { color: Colors.dark.link }} style={{ marginLeft: 20 }} onPress={() => navigateTopLevel(router, "/live", pathname)}>
             {({ focused }) => (
               <ThemedText style={[dynamicStyles.headerTitle, { color: focused ? "white" : "grey" }]}>直播</ThemedText>
             )}
           </Pressable>
+          <Pressable android_ripple={Platform.isTV || deviceType !== 'tv'? { color: 'transparent' } : { color: Colors.dark.link }} style={{ marginLeft: 20 }} onPress={() => navigateTopLevel(router, "/music", pathname)}>
+            {({ focused }) => (
+              <ThemedText style={[dynamicStyles.headerTitle, { color: focused ? "white" : "grey" }]}>音乐</ThemedText>
+            )}
+          </Pressable>
         </View>
         <View style={dynamicStyles.rightHeaderButtons}>
-          <StyledButton style={dynamicStyles.iconButton} onPress={() => router.push("/favorites")} variant="ghost">
+          <StyledButton style={dynamicStyles.iconButton} onPress={() => navigateTopLevel(router, "/favorites", pathname)} variant="ghost">
             <Heart color={colorScheme === "dark" ? "white" : "black"} size={24} />
           </StyledButton>
           <StyledButton
             style={dynamicStyles.iconButton}
-            onPress={() => router.push({ pathname: "/search" })}
+            onPress={() => navigateTopLevel(router, "/search", pathname)}
             variant="ghost"
           >
             <Search color={colorScheme === "dark" ? "white" : "black"} size={24} />
           </StyledButton>
-          <StyledButton style={dynamicStyles.iconButton} onPress={() => router.push("/settings")} variant="ghost">
+          <StyledButton style={dynamicStyles.iconButton} onPress={() => navigateTopLevel(router, "/settings", pathname)} variant="ghost">
             <Settings color={colorScheme === "dark" ? "white" : "black"} size={24} />
           </StyledButton>
           {isLoggedIn && (

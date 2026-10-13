@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, StyleSheet, TouchableOpacity, Text, Platform } from 'react-native';
 import { useRouter, usePathname } from 'expo-router';
-import { Home, Search, Heart, Settings, Tv } from 'lucide-react-native';
+import { Home, Search, Heart, Settings, Tv, Music } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { useResponsiveLayout } from '@/hooks/useResponsiveLayout';
 import { DeviceUtils } from '@/utils/DeviceUtils';
@@ -17,6 +17,7 @@ const tabs: TabItem[] = [
   { key: 'home', label: '首页', icon: Home, route: '/' },
   { key: 'search', label: '搜索', icon: Search, route: '/search' },
   { key: 'live', label: '直播', icon: Tv, route: '/live' },
+  { key: 'music', label: '音乐', icon: Music, route: '/music' },
   { key: 'favorites', label: '收藏', icon: Heart, route: '/favorites' },
   { key: 'settings', label: '设置', icon: Settings, route: '/settings' },
 ];

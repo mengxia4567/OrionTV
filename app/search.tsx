@@ -18,6 +18,7 @@ import { getCommonResponsiveStyles } from "@/utils/ResponsiveStyles";
 import ResponsiveNavigation from "@/components/navigation/ResponsiveNavigation";
 import ResponsiveHeader from "@/components/navigation/ResponsiveHeader";
 import { DeviceUtils } from "@/utils/DeviceUtils";
+import { useBackToHome } from "@/hooks/useBackToHome";
 import Logger from '@/utils/Logger';
 
 const logger = Logger.withTag('SearchScreen');
@@ -32,6 +33,9 @@ export default function SearchScreen() {
   const { showModal: showRemoteModal, lastMessage, targetPage, clearMessage } = useRemoteControlStore();
   const { remoteInputEnabled } = useSettingsStore();
   const router = useRouter();
+
+  // 返回键：回首页，而不是直接退出应用（搜索页是顶层导航栈底）
+  useBackToHome();
 
   // 响应式布局配置
   const responsiveConfig = useResponsiveLayout();

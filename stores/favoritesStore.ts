@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { Favorite, FavoriteManager } from "@/services/storage";
+import { mapApiErrorMessage } from "@/utils/apiErrorMessage";
 
 interface FavoritesState {
   favorites: (Favorite & { key: string })[];
@@ -23,8 +24,7 @@ const useFavoritesStore = create<FavoritesState>((set) => ({
       //   favoritesArray.sort((a, b) => (b.save_time || 0) - (a.save_time || 0));
       set({ favorites: favoritesArray, loading: false });
     } catch (e) {
-      const error = e instanceof Error ? e.message : "获取收藏列表失败";
-      set({ error, loading: false });
+      set({ error: mapApiErrorMessage(e, "获取收藏列表失败"), loading: false });
     }
   },
 }));

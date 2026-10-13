@@ -75,8 +75,37 @@ export interface ServerConfig {
   StorageType: "localstorage" | "redis" | string;
 }
 
+// region: --- Auth Token Storage ---
+// 登录令牌以 Authorization 头作为认证主通道（比 cookie 在 RN 各平台上更可靠）。
+// 服务端中间件优先读取该头，支持 "Token xxx" / "Bearer xxx" / 原始值三种形式。
+export const AUTH_TOKEN_KEY = "authToken";
+
+export async function getStoredAuthToken(): Promise<string | null> {
+  try {
+    const token = await AsyncStorage.getItem(AUTH_TOKEN_KEY);
+    return token && token.trim() ? token : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function setStoredAuthToken(token: string | null | undefined): Promise<void> {
+  try {
+    if (token && token.trim()) {
+      await AsyncStorage.setItem(AUTH_TOKEN_KEY, token);
+    } else {
+      await AsyncStorage.removeItem(AUTH_TOKEN_KEY);
+    }
+  } catch {
+    // 忽略存储异常，不影响主流程
+  }
+}
+
 export class API {
   public baseURL: string = "";
+
+  // 会话失效自愈回调（由 authStore 注册：先续期、再静默重登）
+  private onAuthRecovery: (() => Promise<boolean>) | null = null;
 
   constructor(baseURL?: string) {
     if (baseURL) {
@@ -88,14 +117,60 @@ export class API {
     this.baseURL = url;
   }
 
-  private async _fetch(url: string, options: RequestInit = {}): Promise<Response> {
+  /** 点播流代理覆盖（可选）：设置后所有 m3u8 播放地址改为经该地址代理 */
+  private vodProxyUrl = "";
+  private vodProxyToken = "";
+
+  public setVodProxy(url: string | null | undefined, token: string | null | undefined) {
+    this.vodProxyUrl = (url || "").trim().replace(/\/+$/, "");
+    this.vodProxyToken = (token || "").trim();
+  }
+
+  public setAuthRecoveryHandler(handler: (() => Promise<boolean>) | null) {
+    this.onAuthRecovery = handler;
+  }
+
+  /** 供非 _fetch 链路（照片墙等）在遇到 401 时主动触发一次会话自愈（续期 → 静默重登） */
+  public async triggerAuthRecovery(): Promise<boolean> {
+    if (!this.onAuthRecovery) {
+      return false;
+    }
+    try {
+      return await this.onAuthRecovery();
+    } catch {
+      return false;
+    }
+  }
+
+  private async _fetch(
+    url: string,
+    options: RequestInit & { skipAuth?: boolean; skipRecovery?: boolean } = {},
+    retried = false
+  ): Promise<Response> {
     if (!this.baseURL) {
       throw new Error("API_URL_NOT_SET");
     }
 
-    const response = await fetch(`${this.baseURL}${url}`, options);
+    const { skipAuth = false, skipRecovery = false, ...init } = options;
+
+    const headers = new Headers(init.headers);
+    if (!skipAuth) {
+      const token = await getStoredAuthToken();
+      if (token) {
+        headers.set("Authorization", `Token ${token}`);
+      }
+    }
+
+    const response = await fetch(`${this.baseURL}${url}`, { ...init, headers });
 
     if (response.status === 401) {
+      // 令牌过期/失效：自动续期或静默重登一次，然后重试原请求
+      if (!skipAuth && !skipRecovery && !retried && this.onAuthRecovery) {
+        const recovered = await this.onAuthRecovery().catch(() => false);
+        if (recovered) {
+          return this._fetch(url, options, true);
+        }
+      }
       throw new Error("UNAUTHORIZED");
     }
 
@@ -106,27 +181,56 @@ export class API {
     return response;
   }
 
-  async login(username?: string | undefined, password?: string): Promise<{ ok: boolean }> {
+  async login(username?: string | undefined, password?: string): Promise<{ ok: boolean; token?: string }> {
     const response = await this._fetch("/api/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),
+      skipAuth: true,
     });
 
-    // 存储cookie到AsyncStorage
+    // 存储cookie到AsyncStorage（兼容不支持 token 的服务端）
     const cookies = response.headers.get("Set-Cookie");
     if (cookies) {
       await AsyncStorage.setItem("authCookies", cookies);
     }
 
-    return response.json();
+    const data = await response.json();
+    // 保存响应体中的 token（认证主通道）
+    if (data && typeof data.token === "string") {
+      await setStoredAuthToken(data.token);
+    }
+    return data;
+  }
+
+  /**
+   * 尝试续期当前会话（服务端从 Authorization 头读取当前令牌）。
+   * 成功返回新令牌并持久化；失败返回 null（调用方回退到静默重登）。
+   */
+  async refreshToken(): Promise<string | null> {
+    try {
+      const response = await this._fetch("/api/auth/refresh", {
+        method: "POST",
+        skipRecovery: true,
+      });
+      const data = await response.json();
+      if (data && typeof data.token === "string" && data.token) {
+        await setStoredAuthToken(data.token);
+        return data.token;
+      }
+      return null;
+    } catch {
+      return null;
+    }
   }
 
   async logout(): Promise<{ ok: boolean }> {
     const response = await this._fetch("/api/logout", {
       method: "POST",
+      skipRecovery: true,
     });
     await AsyncStorage.setItem("authCookies", '');
+    await setStoredAuthToken(null);
     return response.json();
   }
 
@@ -200,6 +304,286 @@ export class API {
     return `${this.baseURL}/api/image-proxy?url=${encodeURIComponent(imageUrl)}`;
   }
 
+  /**
+   * 点播 m3u8 走服务端代理（服务端可 302 到媒体加速代理：多线程缓存 + 预取）。
+   * 非 m3u8 / 未配置服务器地址时原样返回。
+   */
+  getVodProxyUrl(originalUrl: string): string {
+    if (!originalUrl) {
+      return originalUrl;
+    }
+    const lower = originalUrl.toLowerCase();
+    if (!((lower.startsWith("http://") || lower.startsWith("https://")) && lower.includes(".m3u8"))) {
+      return originalUrl;
+    }
+    const encoded = encodeURIComponent(originalUrl);
+    // 优先使用「播放代理」设置（设置中自行填写地址与令牌，仓库不预置域名）
+    if (this.vodProxyUrl) {
+      const t = this.vodProxyToken ? `&t=${encodeURIComponent(this.vodProxyToken)}` : "";
+      // .m3u8 结尾：ExoPlayer 依据路径扩展名识别 HLS；/api/proxy/vod/m3u8 不含扩展名会被当作普通视频解析而失败
+      return `${this.vodProxyUrl}/api/proxy/vod/playlist.m3u8?url=${encoded}${t}`;
+    }
+    if (!this.baseURL) {
+      return originalUrl;
+    }
+    // .m3u8 结尾：同上下载说明（43 nginx 已同步支持该路径）
+    return `${this.baseURL}/api/proxy/vod/playlist.m3u8?url=${encoded}`;
+  }
+
+  // ===== 音乐（MoonTVPlus 音乐模块；后端在服务器侧配置，App 无需额外设置） =====
+  async musicSearch(q: string, source = "kw", limit = 40): Promise<any> {
+    const response = await this._fetch(
+      `/api/music/v2/search?q=${encodeURIComponent(q)}&source=${source}&type=song&page=1&limit=${limit}`
+    );
+    return response.json();
+  }
+
+  async musicHotSearch(source = "kw"): Promise<any> {
+    const response = await this._fetch(
+      `/api/music/v2/discovery/hot-search?source=${source}`
+    );
+    return response.json();
+  }
+
+  /** 构建音乐流地址（expo-av 播放时需另附 Authorization 头） */
+  buildMusicStreamUrl(
+    song: {
+      source: string;
+      songId: string;
+      songmid?: string;
+      name?: string;
+      artist?: string;
+      durationText?: string;
+    },
+    quality = "320k"
+  ): string {
+    const parts = [
+      `source=${encodeURIComponent(song.source)}`,
+      `songId=${encodeURIComponent(song.songId)}`,
+      song.songmid ? `songmid=${encodeURIComponent(song.songmid)}` : "",
+      song.name ? `name=${encodeURIComponent(song.name)}` : "",
+      song.artist ? `artist=${encodeURIComponent(song.artist)}` : "",
+      song.durationText ? `durationText=${encodeURIComponent(song.durationText)}` : "",
+      `quality=${encodeURIComponent(quality)}`,
+    ].filter(Boolean);
+    return `${this.baseURL}/api/music/v2/stream?${parts.join("&")}`;
+  }
+
+  // ===== 音乐 · 发现（榜单 / 歌单 / 歌手 / 专辑） =====
+  /** 排行榜列表 */
+  async musicBoards(source = "wy"): Promise<any> {
+    const response = await this._fetch(`/api/music/v2/discovery/boards?source=${source}`);
+    return response.json();
+  }
+
+  /** 榜单歌曲 */
+  async musicBoardSongs(source: string, boardId: string, page = 1): Promise<any> {
+    const response = await this._fetch(
+      `/api/music/v2/discovery/board-songs?source=${source}&boardId=${encodeURIComponent(boardId)}&page=${page}`
+    );
+    return response.json();
+  }
+
+  /** 推荐歌单广场 */
+  async musicSonglists(source = "wy", page = 1, tagId = "", sortId = "hot"): Promise<any> {
+    const parts = [`source=${source}`, `page=${page}`, `sortId=${encodeURIComponent(sortId)}`];
+    if (tagId) parts.push(`tagId=${encodeURIComponent(tagId)}`);
+    const response = await this._fetch(`/api/music/v2/discovery/songlists?${parts.join("&")}`);
+    return response.json();
+  }
+
+  /** 歌单标签（分类） */
+  async musicSonglistTags(source = "wy"): Promise<any> {
+    const response = await this._fetch(`/api/music/v2/discovery/songlist-tags?source=${source}`);
+    return response.json();
+  }
+
+  /** 歌单详情（含歌曲列表） */
+  async musicSonglistDetail(source: string, id: string, page = 1): Promise<any> {
+    const response = await this._fetch(
+      `/api/music/v2/discovery/songlist-detail?source=${source}&id=${encodeURIComponent(id)}&page=${page}`
+    );
+    return response.json();
+  }
+
+  /** 歌手歌曲 */
+  async musicArtistSongs(source: string, id: string, order = "hot"): Promise<any> {
+    const response = await this._fetch(
+      `/api/music/v2/discovery/artist-songs?source=${source}&id=${encodeURIComponent(id)}&order=${order}`
+    );
+    return response.json();
+  }
+
+  /** 专辑歌曲 */
+  async musicAlbumSongs(source: string, id: string): Promise<any> {
+    const response = await this._fetch(
+      `/api/music/v2/discovery/album-songs?source=${source}&id=${encodeURIComponent(id)}`
+    );
+    return response.json();
+  }
+
+  // ===== 音乐 · 歌词 / 我的 / 历史 =====
+  /** 歌词（LRC 文本；tlyric 为翻译，可能为空） */
+  async musicLyric(song: {
+    source: string;
+    songId: string;
+    songmid?: string;
+    name?: string;
+    artist?: string;
+    durationText?: string;
+  }): Promise<{ lyric: string; tlyric: string }> {
+    const response = await this._fetch(`/api/music/v2/lyric`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ song }),
+    });
+    const j = await response.json().catch(() => ({} as any));
+    const d = j?.data || {};
+    return { lyric: d.lyric || "", tlyric: d.tlyric || "" };
+  }
+
+  /** 我的歌单列表 */
+  async musicPlaylists(): Promise<any> {
+    const response = await this._fetch(`/api/music/v2/playlists`);
+    return response.json();
+  }
+
+  /** 创建歌单 */
+  async musicPlaylistCreate(name: string, description?: string): Promise<any> {
+    const response = await this._fetch(`/api/music/v2/playlists`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, description }),
+    });
+    return response.json();
+  }
+
+  /** 编辑歌单（改名/描述） */
+  async musicPlaylistUpdate(
+    playlistId: string,
+    patch: { name?: string; description?: string }
+  ): Promise<any> {
+    const response = await this._fetch(
+      `/api/music/v2/playlists/${encodeURIComponent(playlistId)}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      }
+    );
+    return response.json();
+  }
+
+  /** 歌单歌曲列表 */
+  async musicPlaylistSongs(playlistId: string): Promise<any> {
+    const response = await this._fetch(
+      `/api/music/v2/playlists/${encodeURIComponent(playlistId)}/songs`
+    );
+    return response.json();
+  }
+
+  /** 歌曲加入歌单 */
+  async musicPlaylistAddSong(
+    playlistId: string,
+    song: {
+      source: string;
+      songId: string;
+      songmid?: string;
+      name: string;
+      artist: string;
+      album?: string;
+      cover?: string;
+      durationText?: string;
+    }
+  ): Promise<any> {
+    const response = await this._fetch(
+      `/api/music/v2/playlists/${encodeURIComponent(playlistId)}/songs`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ song }),
+      }
+    );
+    return response.json();
+  }
+
+  /** 从歌单移除歌曲 */
+  async musicPlaylistRemoveSong(playlistId: string, songId: string): Promise<any> {
+    const response = await this._fetch(
+      `/api/music/v2/playlists/${encodeURIComponent(playlistId)}/songs?songId=${encodeURIComponent(songId)}`,
+      { method: "DELETE" }
+    );
+    return response.json();
+  }
+
+  /** 删除歌单 */
+  async musicPlaylistDelete(playlistId: string): Promise<any> {
+    const response = await this._fetch(
+      `/api/music/v2/playlists/${encodeURIComponent(playlistId)}`,
+      { method: "DELETE" }
+    );
+    return response.json();
+  }
+
+  /** 播放历史（records） */
+  async musicHistory(): Promise<any> {
+    const response = await this._fetch(`/api/music/v2/history`);
+    return response.json();
+  }
+
+  /**
+   * 播放历史入库（含播放进度）——「续播」的数据来源。
+   * 不带 playProgressSec 时服务端保留原值（用于开播时"确保入历史"而不冲掉续播点）。
+   * 尽力而为：失败不影响播放。
+   */
+  async saveMusicHistory(record: {
+    songId: string;
+    source: string;
+    songmid?: string;
+    name: string;
+    artist: string;
+    album?: string;
+    cover?: string;
+    durationText?: string;
+    durationSec?: number;
+    playProgressSec?: number;
+    playedAt?: number;
+  }): Promise<any> {
+    try {
+      const response = await this._fetch(`/api/music/v2/history`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ record: { ...record, playedAt: record.playedAt ?? Date.now() } }),
+      });
+      return await response.json().catch(() => null);
+    } catch {
+      return null;
+    }
+  }
+
+  /** 播放上报（尽力而为：失败不影响播放） */
+  async musicPlayReport(song: {
+    source: string;
+    songId: string;
+    songmid?: string;
+    name?: string;
+    artist?: string;
+    album?: string;
+    cover?: string;
+    durationText?: string;
+  }): Promise<any> {
+    try {
+      const response = await this._fetch(`/api/music/v2/play`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ song, playedAt: Date.now() }),
+      });
+      return await response.json().catch(() => null);
+    } catch {
+      return null;
+    }
+  }
+
   async getDoubanData(
     type: "movie" | "tv",
     tag: string,
@@ -239,3 +623,18 @@ export class API {
 
 // 默认实例
 export let api = new API();
+
+/** 从代理 URL 还原原始地址（非代理 URL 返回 null）—— 播放失败自愈用 */
+export function unwrapVodProxyUrl(url: string): string | null {
+  try {
+    // 兼容旧路径 /api/proxy/vod/m3u8 与新路径 /api/proxy/vod/playlist.m3u8
+    const m = url.match(/\/api\/proxy\/vod\/(?:playlist\.)?m3u8\?url=([^&]+)/);
+    if (!m) {
+      return null;
+    }
+    const decoded = decodeURIComponent(m[1]);
+    return decoded.startsWith("http") ? decoded : null;
+  } catch {
+    return null;
+  }
+}

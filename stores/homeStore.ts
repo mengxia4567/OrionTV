@@ -30,6 +30,7 @@ const initialCategories: Category[] = [
   { title: "最近播放", type: "record" },
   { title: "热门剧集", type: "tv", tag: "热门" },
   { title: "电视剧", type: "tv", tags: ["国产剧", "美剧", "英剧", "韩剧", "日剧", "港剧", "日本动画", "动画"] },
+  { title: "动漫", type: "tv", tags: ["日本动画"] },
   {
     title: "电影",
     type: "movie",

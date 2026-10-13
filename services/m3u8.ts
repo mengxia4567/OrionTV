@@ -1,3 +1,4 @@
+import { api } from '@/services/api';
 import Logger from '@/utils/Logger';
 
 const logger = Logger.withTag('M3U8');
@@ -32,7 +33,14 @@ export const getResolutionFromM3U8 = async (
 
   try {
     const fetchStart = performance.now();
-    const response = await fetch(url, { signal });
+    // 经点播代理探测（更快更稳；未配置代理时自动原样直连）
+    let probeUrl = url;
+    try {
+      probeUrl = api.getVodProxyUrl(url) || url;
+    } catch {
+      probeUrl = url;
+    }
+    const response = await fetch(probeUrl, { signal });
     const fetchEnd = performance.now();
     logger.info(`[PERF] M3U8 fetch took ${(fetchEnd - fetchStart).toFixed(2)}ms, status: ${response.status}`);
     

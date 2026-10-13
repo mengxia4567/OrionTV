@@ -29,7 +29,7 @@ export const UPDATE_CONFIG = {
   // 更新通知设置
   NOTIFICATION: {
     ENABLED: true,
-    TITLE: "OrionTV 更新",
+    TITLE: "福宝观影 更新",
     DOWNLOADING_TEXT: "正在下载新版本...",
     DOWNLOAD_COMPLETE_TEXT: "下载完成，点击安装",
   },

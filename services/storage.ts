@@ -39,6 +39,10 @@ export interface AppSettings {
     };
   };
   m3uUrl: string;
+  /** 点播流代理地址（可选）；为空则走服务器 /api/proxy/vod/m3u8（服务端 302） */
+  vodProxyUrl?: string;
+  /** 点播流代理访问令牌（可选，配合 vodProxyUrl 使用） */
+  vodProxyToken?: string;
 }
 
 export interface LoginCredentials {
@@ -167,6 +171,15 @@ export class FavoriteManager {
     }
     await api.deleteFavorite();
   }
+
+  /** 仅清除本机缓存（不动服务器数据），用于退出登录/切换账号时防止串号显示 */
+  static async clearLocalCache(): Promise<void> {
+    try {
+      await AsyncStorage.removeItem(STORAGE_KEYS.FAVORITES);
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 // --- PlayRecordManager (Dynamic: API or LocalStorage) ---
@@ -268,6 +281,15 @@ export class PlayRecordManager {
       await api.deletePlayRecord();
     }
   }
+
+  /** 仅清除本机缓存（不动服务器数据），用于退出登录/切换账号时防止串号显示 */
+  static async clearLocalCache(): Promise<void> {
+    try {
+      await AsyncStorage.removeItem(STORAGE_KEYS.PLAY_RECORDS);
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 // --- SearchHistoryManager (Dynamic: API or LocalStorage) ---
@@ -309,6 +331,15 @@ export class SearchHistoryManager {
     }
     await api.deleteSearchHistory();
   }
+
+  /** 仅清除本机缓存（不动服务器数据），用于退出登录/切换账号时防止串号显示 */
+  static async clearLocalCache(): Promise<void> {
+    try {
+      await AsyncStorage.removeItem(STORAGE_KEYS.SEARCH_HISTORY);
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 // --- SettingsManager (Uses AsyncStorage) ---
@@ -322,6 +353,8 @@ export class SettingsManager {
         sources: {},
       },
       m3uUrl: "",
+      vodProxyUrl: "",
+      vodProxyToken: "",
     };
     try {
       const data = await AsyncStorage.getItem(STORAGE_KEYS.SETTINGS);

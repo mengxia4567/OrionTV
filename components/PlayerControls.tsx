@@ -1,6 +1,6 @@
 import React from "react";
 import { View, Text, StyleSheet, Pressable } from "react-native";
-import { Pause, Play, SkipForward, List, Tv, ArrowDownToDot, ArrowUpFromDot, Gauge } from "lucide-react-native";
+import { Pause, Play, SkipForward, List, Tv, ArrowDownToDot, ArrowUpFromDot, Gauge, Maximize } from "lucide-react-native";
 import { ThemedText } from "@/components/ThemedText";
 import { MediaButton } from "@/components/MediaButton";
 
@@ -11,9 +11,15 @@ import { useSources } from "@/stores/sourceStore";
 interface PlayerControlsProps {
   showControls: boolean;
   setShowControls: (show: boolean) => void;
+  /** 全屏切换（由播放页传入；使用 expo-av 原生全屏） */
+  onToggleFullscreen?: () => void;
 }
 
-export const PlayerControls: React.FC<PlayerControlsProps> = ({ showControls, setShowControls }) => {
+export const PlayerControls: React.FC<PlayerControlsProps> = ({
+  showControls,
+  setShowControls,
+  onToggleFullscreen,
+}) => {
   const {
     currentEpisodeIndex,
     episodes,
@@ -118,6 +124,12 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({ showControls, se
           <MediaButton onPress={() => setShowSourceModal(true)}>
             <Tv color="white" size={24} />
           </MediaButton>
+
+          {onToggleFullscreen ? (
+            <MediaButton onPress={onToggleFullscreen}>
+              <Maximize color="white" size={24} />
+            </MediaButton>
+          ) : null}
         </View>
       </View>
     </View>

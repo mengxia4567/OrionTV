@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!-- 福宝观影：启动屏（黑底 + 熊猫 logo）。应用级覆盖，保证不依赖 prebuild 插件是否生成 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/splashscreen_background"/>
+    <item>
+        <bitmap android:gravity="center" android:src="@drawable/fubao_splash_logo"/>
+    </item>
+</layer-list>

@@ -109,7 +109,8 @@ export const useVideoHandlers = ({
     onLoad,
     onLoadStart,
     onError,
-    useNativeControls: deviceType !== 'tv',
+    // 手机/平板用自绘控制层（MobileVodControls），原生控件只会带出不锁方向的原生全屏
+    useNativeControls: false,
     shouldPlay: true,
   }), [
     currentEpisode?.url,

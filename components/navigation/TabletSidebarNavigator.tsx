@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { View, StyleSheet, TouchableOpacity, Text, ScrollView } from 'react-native';
 import { useRouter, usePathname } from 'expo-router';
-import { Home, Search, Heart, Settings, Tv, Menu, X } from 'lucide-react-native';
+import { navigateTopLevel } from '@/utils/topLevelNav';
+import { Home, Search, Heart, Settings, Tv, Menu, X, Music } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
 import { useResponsiveLayout } from '@/hooks/useResponsiveLayout';
 import { DeviceUtils } from '@/utils/DeviceUtils';
@@ -19,18 +20,22 @@ const sidebarItems: SidebarItem[] = [
   { key: 'home', label: '首页', icon: Home, route: '/', section: 'main' },
   { key: 'search', label: '搜索', icon: Search, route: '/search', section: 'main' },
   { key: 'live', label: '直播', icon: Tv, route: '/live', section: 'main' },
+  { key: 'music', label: '音乐', icon: Music, route: '/music', section: 'main' },
   { key: 'favorites', label: '收藏', icon: Heart, route: '/favorites', section: 'user' },
   { key: 'settings', label: '设置', icon: Settings, route: '/settings', section: 'user' },
 ];
 
 interface TabletSidebarNavigatorProps {
   children: React.ReactNode;
+  /** 沉浸式全屏时隐藏侧栏（保持组件树不变） */
+  hideChrome?: boolean;
   collapsed?: boolean;
   onToggleCollapse?: (collapsed: boolean) => void;
 }
 
 const TabletSidebarNavigator: React.FC<TabletSidebarNavigatorProps> = ({
   children,
+  hideChrome = false,
   collapsed: controlledCollapsed,
   onToggleCollapse,
 }) => {
@@ -51,12 +56,9 @@ const TabletSidebarNavigator: React.FC<TabletSidebarNavigatorProps> = ({
     }
   };
 
+  // 顶层入口用 replace 语义（同 MobileTabContainer），避免栈套娃
   const handleItemPress = (route: string) => {
-    if (route === '/') {
-      router.push('/');
-    } else {
-      router.push(route as any);
-    }
+    navigateTopLevel(router, route as any, pathname);
     
     // 在竖屏模式下，导航后自动折叠侧边栏
     if (isPortrait && !controlledCollapsed) {
@@ -121,7 +123,7 @@ const TabletSidebarNavigator: React.FC<TabletSidebarNavigatorProps> = ({
   return (
     <View style={dynamicStyles.container}>
       {/* 侧边栏 */}
-      <View style={[dynamicStyles.sidebar, collapsed && dynamicStyles.collapsedSidebar]}>
+      <View style={[dynamicStyles.sidebar, collapsed && dynamicStyles.collapsedSidebar, hideChrome && { display: 'none' }]}>
         {/* 侧边栏头部 */}
         <View style={dynamicStyles.sidebarHeader}>
           <TouchableOpacity
@@ -136,7 +138,7 @@ const TabletSidebarNavigator: React.FC<TabletSidebarNavigatorProps> = ({
             )}
           </TouchableOpacity>
           {!collapsed && (
-            <ThemedText style={dynamicStyles.appTitle}>OrionTV</ThemedText>
+            <ThemedText style={dynamicStyles.appTitle}>福宝观影</ThemedText>
           )}
         </View>
 

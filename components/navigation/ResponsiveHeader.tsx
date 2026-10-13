@@ -12,6 +12,8 @@ interface ResponsiveHeaderProps {
   showBackButton?: boolean;
   rightComponent?: React.ReactNode;
   onBackPress?: () => void;
+  /** 沉浸式全屏时隐藏 */
+  hidden?: boolean;
 }
 
 const ResponsiveHeader: React.FC<ResponsiveHeaderProps> = ({
@@ -19,13 +21,14 @@ const ResponsiveHeader: React.FC<ResponsiveHeaderProps> = ({
   showBackButton = false,
   rightComponent,
   onBackPress,
+  hidden = false,
 }) => {
   const router = useRouter();
   const { deviceType, spacing } = useResponsiveLayout();
   const insets = useSafeAreaInsets();
   
   // TV端不显示Header，使用现有的页面内导航
-  if (deviceType === 'tv') {
+  if (deviceType === 'tv' || hidden) {
     return null;
   }
 

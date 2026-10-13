@@ -2,6 +2,7 @@ import React, { useEffect } from "react";
 import { View, StyleSheet } from "react-native";
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
+import { useBackToHome } from "@/hooks/useBackToHome";
 import useFavoritesStore from "@/stores/favoritesStore";
 import { Favorite } from "@/services/storage";
 import VideoCard from "@/components/VideoCard";
@@ -14,6 +15,9 @@ import ResponsiveHeader from "@/components/navigation/ResponsiveHeader";
 
 export default function FavoritesScreen() {
   const { favorites, loading, error, fetchFavorites } = useFavoritesStore();
+
+  // 返回键：回首页，而不是直接退出应用（顶层导航改 replace 后这里是栈底）
+  useBackToHome();
 
   // 响应式布局配置
   const responsiveConfig = useResponsiveLayout();

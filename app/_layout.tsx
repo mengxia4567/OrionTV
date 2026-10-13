@@ -2,8 +2,8 @@ import { DarkTheme, DefaultTheme, ThemeProvider } from "@react-navigation/native
 import { useFonts } from "expo-font";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
-import { useEffect } from "react";
-import { Platform, View, StyleSheet } from "react-native";
+import { useEffect, useState } from "react";
+import { Platform, View, StyleSheet, AppState } from "react-native";
 import Toast from "react-native-toast-message";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
@@ -13,6 +13,9 @@ import LoginModal from "@/components/LoginModal";
 import useAuthStore from "@/stores/authStore";
 import { useUpdateStore, initUpdateStore } from "@/stores/updateStore";
 import { UpdateModal } from "@/components/UpdateModal";
+import PhotoWallSplash from "@/components/PhotoWallSplash";
+import MiniPlayer from "@/components/music/MiniPlayer";
+import FullPlayer from "@/components/music/FullPlayer";
 import { UPDATE_CONFIG } from "@/constants/UpdateConfig";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import Logger from '@/utils/Logger';
@@ -23,6 +26,7 @@ const logger = Logger.withTag('RootLayout');
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
+  const [splashDone, setSplashDone] = useState(false);
   const colorScheme = "dark";
   const [loaded, error] = useFonts({
     SpaceMono: require("../assets/fonts/SpaceMono-Regular.ttf"),
@@ -47,13 +51,31 @@ export default function RootLayout() {
     }
   }, [apiBaseUrl, checkLoginStatus]);
 
+  // 从后台/待机恢复时复查登录状态（令牌失效时自动静默重登）
   useEffect(() => {
-    if (loaded || error) {
-      SplashScreen.hideAsync();
-      if (error) {
-        logger.warn(`Error in loading fonts: ${error}`);
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state === "active") {
+        const url = useSettingsStore.getState().apiBaseUrl;
+        if (url) {
+          checkLoginStatus(url);
+        }
       }
+    });
+    return () => subscription.remove();
+  }, [checkLoginStatus]);
+
+  useEffect(() => {
+    if (!(loaded || error)) {
+      return;
     }
+    if (error) {
+      logger.warn(`Error in loading fonts: ${error}`);
+    }
+    // native splash 由 PhotoWallSplash 首帧渲染后隐藏（避免窗口露白）；这里仅做 5 秒兜底
+    const timer = setTimeout(() => {
+      SplashScreen.hideAsync().catch(() => {});
+    }, 5000);
+    return () => clearTimeout(timer);
   }, [loaded, error]);
 
   // 检查更新
@@ -92,12 +114,20 @@ export default function RootLayout() {
             <Stack.Screen name="live" options={{ headerShown: false }} />
             <Stack.Screen name="settings" options={{ headerShown: false }} />
             <Stack.Screen name="favorites" options={{ headerShown: false }} />
+            <Stack.Screen name="music/index" options={{ headerShown: false }} />
+            <Stack.Screen name="music/playlist" options={{ headerShown: false }} />
             <Stack.Screen name="+not-found" />
           </Stack>
+          {/* 全局音乐层：迷你播放条 + 全屏播放器（跨页面常驻；由 musicStore 控制显隐） */}
+          <MiniPlayer />
+          <FullPlayer />
         </View>
         <Toast />
         <LoginModal />
         <UpdateModal />
+        {!splashDone && (
+          <PhotoWallSplash onDone={() => setSplashDone(true)} />
+        )}
       </ThemeProvider>
     </SafeAreaProvider>
   );
@@ -106,5 +136,6 @@ export default function RootLayout() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: "#0B0B0C",
   },
 });

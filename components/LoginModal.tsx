@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Modal, View, TextInput, StyleSheet, ActivityIndicator, Alert, Keyboard, InteractionManager } from "react-native";
+import { Modal, TextInput, StyleSheet, ActivityIndicator, Alert, Keyboard, InteractionManager, useTVEventHandler, KeyboardAvoidingView, Platform } from "react-native";
 import { usePathname } from "expo-router";
 import Toast from "react-native-toast-message";
 import useAuthStore from "@/stores/authStore";
@@ -20,6 +20,7 @@ const LoginModal = () => {
   const [isLoading, setIsLoading] = useState(false);
   const usernameInputRef = useRef<TextInput>(null);
   const passwordInputRef = useRef<TextInput>(null);
+  const [focusedField, setFocusedField] = useState<"user" | "pass" | null>(null);
   const pathname = usePathname();
   const isSettingsPage = pathname.includes("settings");
 
@@ -137,6 +138,15 @@ const LoginModal = () => {
     passwordInputRef.current?.focus();
   };
 
+  // TV 遥控器：上/下 在用户名与密码输入框之间切换
+  useTVEventHandler((event: any) => {
+    if (event.eventType === "down" && focusedField === "user") {
+      passwordInputRef.current?.focus();
+    } else if (event.eventType === "up" && focusedField === "pass") {
+      usernameInputRef.current?.focus();
+    }
+  });
+
   return (
     <Modal
       transparent={true}
@@ -144,7 +154,11 @@ const LoginModal = () => {
       animationType="fade"
       onRequestClose={hideLoginModal}
     >
-      <View style={styles.overlay}>
+      {/* 键盘弹出时（尤其输入密码）整体上移，避免下面的密码框被系统键盘盖住点不到 */}
+      <KeyboardAvoidingView
+        style={styles.overlay}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+      >
         <ThemedView style={styles.container}>
           <ThemedText style={styles.title}>需要登录</ThemedText>
           <ThemedText style={styles.subtitle}>服务器需要验证您的身份</ThemedText>
@@ -159,6 +173,8 @@ const LoginModal = () => {
               returnKeyType="next"
               onSubmitEditing={handleUsernameSubmit}
               blurOnSubmit={false}
+              onFocus={() => setFocusedField("user")}
+              onBlur={() => setFocusedField(null)}
             />
           )}
           <TextInput
@@ -171,6 +187,8 @@ const LoginModal = () => {
             onChangeText={setPassword}
             returnKeyType="go"
             onSubmitEditing={handleLogin}
+            onFocus={() => setFocusedField("pass")}
+            onBlur={() => setFocusedField(null)}
           />
           <StyledButton
             text={isLoading ? "" : "登录"}
@@ -182,7 +200,7 @@ const LoginModal = () => {
             {isLoading && <ActivityIndicator color="#fff" />}
           </StyledButton>
         </ThemedView>
-      </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 };

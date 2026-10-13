@@ -64,6 +64,13 @@ const useDetailStore = create<DetailState>((set, get) => ({
 
     const { videoSource } = useSettingsStore.getState();
 
+    // 分辨率排序权重：数值越大越清晰；未知排最后
+    const resRank = (r?: string | null): number => {
+      if (!r) return 0;
+      const m = r.match(/(\d{3,4})p/i);
+      return m ? parseInt(m[1], 10) : 0;
+    };
+
     const processAndSetResults = async (results: SearchResult[], merge = false) => {
       const resolutionStart = performance.now();
       logger.info(`[PERF] Resolution detection START - processing ${results.length} sources`);
@@ -95,7 +102,10 @@ const useDetailStore = create<DetailState>((set, get) => ({
       set((state) => {
         const existingSources = new Set(state.searchResults.map((r) => r.source));
         const newResults = resultsWithResolution.filter((r) => !existingSources.has(r.source));
-        const finalResults = merge ? [...state.searchResults, ...newResults] : resultsWithResolution;
+        // 按清晰度排序（稳定）：高分辨率源在前，默认播放优先更清晰
+        const finalResults = (merge ? [...state.searchResults, ...newResults] : resultsWithResolution)
+          .slice()
+          .sort((a, b) => resRank(b.resolution) - resRank(a.resolution));
 
         return {
           searchResults: finalResults,
