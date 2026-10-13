@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { View, Text, StyleSheet, TouchableOpacity, PanResponder } from "react-native";
-import { ChevronUp, ChevronDown, List, Layers, Maximize, Minimize } from "lucide-react-native";
+import { ChevronUp, ChevronDown, List, Layers, Maximize, Minimize, Proportions } from "lucide-react-native";
+import { useAspectStore } from "@/stores/aspectStore";
+import { ASPECT_LABEL } from "@/utils/aspectMode";
 import { classifySwipe, isDoubleTap, SwipeDir } from "@/utils/liveGesture";
 
 interface Props {
@@ -17,6 +19,9 @@ interface Props {
   onOpenSource: () => void;
   onToggleFullscreen: () => void;
   isFullscreen?: boolean;
+  /** 当前频道加载失败：居中显示「重试」 */
+  failed?: boolean;
+  onRetry?: () => void;
 }
 
 const AUTO_HIDE_MS = 3000;
@@ -32,6 +37,8 @@ const HINT_MS = 4500;
 export default function LiveTouchControls(props: Props) {
   const [visible, setVisible] = useState(false);
   const [hint, setHint] = useState(true);
+  const aspectMode = useAspectStore((s) => s.mode);
+  const cycleAspect = useAspectStore((s) => s.cycle);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -122,7 +129,7 @@ export default function LiveTouchControls(props: Props) {
           if (longTimer.current) clearTimeout(longTimer.current);
         },
       }),
-    [armAutoHide, handleSwipe]
+    [armAutoHide, handleSwipe],
   );
 
   /** 点控制条上的按钮：执行动作并重置自动隐藏计时 */
@@ -135,6 +142,14 @@ export default function LiveTouchControls(props: Props) {
     <>
       {/* 手势层：覆盖画面，位于控制条之下 */}
       <View style={StyleSheet.absoluteFill} {...pan.panHandlers} />
+
+      {props.failed ? (
+        <View style={styles.retryWrap} pointerEvents="box-none">
+          <TouchableOpacity style={styles.retryBtn} onPress={props.onRetry} accessibilityLabel="重试">
+            <Text style={styles.retryText}>重试</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
 
       {hint ? (
         <View style={styles.hint} pointerEvents="none">
@@ -163,6 +178,11 @@ export default function LiveTouchControls(props: Props) {
                 <Layers size={22} color="#fff" />
               </BarBtn>
             ) : null}
+            {props.isFullscreen ? (
+              <BarBtn onPress={act(cycleAspect)} label={`比例·${ASPECT_LABEL[aspectMode]}`}>
+                <Proportions size={22} color="#fff" />
+              </BarBtn>
+            ) : null}
             <BarBtn onPress={act(props.onToggleFullscreen)} label={props.isFullscreen ? "退出全屏" : "全屏"}>
               {props.isFullscreen ? <Minimize size={22} color="#fff" /> : <Maximize size={22} color="#fff" />}
             </BarBtn>
@@ -173,15 +193,7 @@ export default function LiveTouchControls(props: Props) {
   );
 }
 
-function BarBtn({
-  onPress,
-  label,
-  children,
-}: {
-  onPress: () => void;
-  label: string;
-  children: React.ReactNode;
-}) {
+function BarBtn({ onPress, label, children }: { onPress: () => void; label: string; children: React.ReactNode }) {
   return (
     <TouchableOpacity style={styles.btn} onPress={onPress} activeOpacity={0.7} accessibilityLabel={label}>
       {children}
@@ -227,6 +239,14 @@ const styles = StyleSheet.create({
     fontSize: 11,
     marginTop: 2,
   },
+  retryWrap: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingTop: 96,
+  },
+  retryBtn: { minWidth: 120, paddingVertical: 10, borderRadius: 8, backgroundColor: "#00bb5e", alignItems: "center" },
+  retryText: { color: "#fff", fontSize: 16, fontWeight: "600" },
   hint: {
     position: "absolute",
     left: 16,

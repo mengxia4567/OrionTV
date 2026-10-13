@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import updateService from '../services/updateService';
+import updateService, { type VersionInfo, type UpdateMode } from '../services/updateService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Toast from 'react-native-toast-message';
 import Logger from '@/utils/Logger';
@@ -20,6 +20,10 @@ interface UpdateState {
   skipVersion: string | null;
   showUpdateModal: boolean;
   isLatestVersion: boolean; // 新增：是否已是最新版本
+  versionInfo: VersionInfo | null; // 最近一次检查得到的版本信息（含增量补丁）
+  updateMode: UpdateMode | null; // 本次下载方式
+  patchSize: number; // 增量补丁大小（字节，0=无）
+  apkSize: number; // 整包大小（字节）
   
   // 操作
   checkForUpdate: (silent?: boolean) => Promise<void>;
@@ -49,6 +53,10 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
   skipVersion: null,
   showUpdateModal: false,
   isLatestVersion: false, // 新增：初始为false
+  versionInfo: null,
+  updateMode: null,
+  patchSize: 0,
+  apkSize: 0,
 
   // 检查更新
   checkForUpdate: async (silent = false) => {
@@ -70,6 +78,9 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
       set({
         remoteVersion: versionInfo.version,
         downloadUrl: versionInfo.downloadUrl,
+        versionInfo,
+        patchSize: versionInfo.patch?.size ?? 0,
+        apkSize: versionInfo.apkSize ?? 0,
         updateAvailable: isUpdateAvailable,
         lastCheckTime: Date.now(),
         skipVersion,
@@ -93,7 +104,6 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
         Date.now().toString()
       );
     } catch (error) {
-      // console.info('检查更新失败:', error);
       set({ 
         error: error instanceof Error ? error.message : '检查更新失败',
         updateAvailable: false,
@@ -104,9 +114,9 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
 
   // 开始下载
   startDownload: async () => {
-    const { downloadUrl } = get();
+    const { downloadUrl, versionInfo } = get();
     
-    if (!downloadUrl) {
+    if (!downloadUrl || !versionInfo) {
       set({ error: '下载地址无效' });
       return;
     }
@@ -118,11 +128,12 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
         error: null 
       });
 
-      const filePath = await updateService.downloadApk(
-        downloadUrl,
+      const filePath = await updateService.fetchUpdate(
+        versionInfo,
         (progress) => {
           set({ downloadProgress: progress });
-        }
+        },
+        (mode) => set({ updateMode: mode }),
       );
 
       set({ 
@@ -131,7 +142,6 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
         downloadProgress: 100,
       });
     } catch (error) {
-      // console.info('下载失败:', error);
       set({ 
         downloading: false,
         downloadProgress: 0,

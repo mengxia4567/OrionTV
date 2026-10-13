@@ -13,7 +13,8 @@ import { SpeedSelectionModal } from "@/components/SpeedSelectionModal";
 import { SeekingBar } from "@/components/SeekingBar";
 import MobileVodControls from "@/components/MobileVodControls";
 import { useImmersiveFullscreen } from "@/hooks/useImmersiveFullscreen";
-// import { NextEpisodeOverlay } from "@/components/NextEpisodeOverlay";
+import { useVideoFit } from "@/hooks/useVideoFit";
+import { useVideoSession } from "@/hooks/useVideoSession";
 import VideoLoadingAnimation from "@/components/VideoLoadingAnimation";
 import useDetailStore from "@/stores/detailStore";
 import { useTVRemoteHandler } from "@/hooks/useTVRemoteHandler";
@@ -21,18 +22,10 @@ import Toast from "react-native-toast-message";
 import usePlayerStore, { selectCurrentEpisode } from "@/stores/playerStore";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { useVideoHandlers } from "@/hooks/useVideoHandlers";
-import Logger from '@/utils/Logger';
-
-const logger = Logger.withTag('PlayScreen');
 
 // 优化的加载动画组件
 const LoadingContainer = memo(
   ({ style, currentEpisode }: { style: any; currentEpisode: { url: string; title: string } | undefined }) => {
-    logger.info(
-      `[PERF] Video component NOT rendered - waiting for valid URL. currentEpisode: ${!!currentEpisode}, url: ${
-        currentEpisode?.url ? "exists" : "missing"
-      }`
-    );
     return (
       <View style={style}>
         <VideoLoadingAnimation showProgressBar />
@@ -80,6 +73,7 @@ export default function PlayScreen() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   // 手机/平板：应用内沉浸式全屏（锁方向 + 隐藏系统栏）；TV 沿用原生全屏
   const fullscreen = useImmersiveFullscreen();
+  const resizeMode = useVideoFit(fullscreen.naturalSize, fullscreen.isFullscreen);
   /** 视频真实尺寸：全屏时按比例决定横/竖 */
   const naturalSizeRef = useRef<NaturalSize | null>(null);
 
@@ -149,6 +143,34 @@ export default function PlayScreen() {
     detail: detail || undefined,
   });
 
+  // 通知栏 / 锁屏媒体卡片（手机、平板）：状态同步给系统，按钮转回播放动作
+  const status = usePlayerStore((s) => s.status);
+  const reloadNonce = usePlayerStore((s) => s.reloadNonce);
+  const episodes = usePlayerStore((s) => s.episodes);
+  const currentEpisodeIndex = usePlayerStore((s) => s.currentEpisodeIndex);
+  const loadedStatus = status && status.isLoaded ? status : null;
+  useVideoSession({
+    enabled: !!currentEpisode?.url,
+    title: detail?.title ?? title ?? "",
+    subtitle: episodes[currentEpisodeIndex]?.title ?? "",
+    artwork: detail?.poster ?? null,
+    canSkip: episodes.length > 1,
+    isLive: false,
+    playing: !!loadedStatus?.isPlaying,
+    positionMs: loadedStatus?.positionMillis ?? 0,
+    durationMs: loadedStatus?.durationMillis ?? 0,
+    rate: playbackRate,
+    onPlay: () => void videoRef.current?.playAsync(),
+    onPause: () => void videoRef.current?.pauseAsync(),
+    onNext: () => {
+      if (currentEpisodeIndex < episodes.length - 1) void usePlayerStore.getState().playEpisode(currentEpisodeIndex + 1);
+    },
+    onPrev: () => {
+      if (currentEpisodeIndex > 0) void usePlayerStore.getState().playEpisode(currentEpisodeIndex - 1);
+    },
+    onSeek: (ms) => void videoRef.current?.setPositionAsync(ms),
+  });
+
   // TV遥控器处理 - 总是调用hook，但根据设备类型决定是否使用结果
   const tvRemoteHandler = useTVRemoteHandler();
 
@@ -156,22 +178,14 @@ export default function PlayScreen() {
   const dynamicStyles = useMemo(() => createResponsiveStyles(deviceType), [deviceType]);
 
   useEffect(() => {
-    const perfStart = performance.now();
-    logger.info(`[PERF] PlayScreen useEffect START - source: ${source}, id: ${id}, title: ${title}`);
 
     setVideoRef(videoRef);
     if (source && id && title) {
-      logger.info(`[PERF] Calling loadVideo with episodeIndex: ${episodeIndex}, position: ${position}`);
       loadVideo({ source, id, episodeIndex, position, title });
     } else {
-      logger.info(`[PERF] Missing required params - source: ${!!source}, id: ${!!id}, title: ${!!title}`);
     }
 
-    const perfEnd = performance.now();
-    logger.info(`[PERF] PlayScreen useEffect END - took ${(perfEnd - perfStart).toFixed(2)}ms`);
-
     return () => {
-      logger.info(`[PERF] PlayScreen unmounting - calling reset()`);
       reset(); // Reset state when component unmounts
     };
   }, [episodeIndex, source, position, setVideoRef, reset, loadVideo, id, title]);
@@ -252,6 +266,7 @@ export default function PlayScreen() {
         {/* 条件渲染Video组件：只有在有有效URL时才渲染 */}
         {currentEpisode?.url ? (
           <Video
+            key={reloadNonce}
             ref={videoRef}
             style={dynamicStyles.videoPlayer}
             onReadyForDisplay={(e) => {
@@ -268,6 +283,7 @@ export default function PlayScreen() {
               }
             }}
             {...videoProps}
+            resizeMode={resizeMode}
           />
         ) : (
           <LoadingContainer style={dynamicStyles.loadingContainer} currentEpisode={currentEpisode} />

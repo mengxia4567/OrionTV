@@ -252,7 +252,7 @@ const useHomeStore = create<HomeState>((set, get) => ({
       let errorMessage = "加载失败，请重试";
 
       if (err.message === "API_URL_NOT_SET") {
-        errorMessage = "请点击右上角设置按钮，配置您的服务器地址";
+        errorMessage = "请先到「设置」页配置服务器地址";
       } else if (err.message === "UNAUTHORIZED") {
         errorMessage = "认证失败，请重新登录";
         useAuthStore.setState({ isLoggedIn: false, isLoginModalVisible: true });

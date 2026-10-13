@@ -88,6 +88,8 @@ const LoginModal = () => {
     setIsLoading(true);
     try {
       await api.login(isLocalStorage ? undefined : username, password);
+      // 登录请求成功即已持有有效令牌：直接确立登录态，不依赖可能是登录前就已在途的状态检查
+      useAuthStore.setState({ isLoggedIn: true, isLoginModalVisible: false });
       await checkLoginStatus(apiBaseUrl);
       await refreshPlayRecords();
 
@@ -95,14 +97,6 @@ const LoginModal = () => {
       await LoginCredentialsManager.save({ username, password });
 
       Toast.show({ type: "success", text1: "登录成功" });
-      // hideLoginModal();
-
-      // // Show disclaimer alert after successful login
-      // Alert.alert(
-      //   "免责声明",
-      //   "本应用仅提供影视信息搜索服务，所有内容均来自第三方网站。本站不存储任何视频资源，不对任何内容的准确性、合法性、完整性负责。",
-      //   [{ text: "确定" }]
-      // );
 
             // 在登录成功后清理状态，再显示 Alert
       const hideAndAlert = () => {

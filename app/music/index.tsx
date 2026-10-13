@@ -29,11 +29,18 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: "mine", label: "我的" },
 ];
 
+/** 记住上次停留的分区：从歌单/榜单页返回（或页面被重建）时仍停在原分区 */
+let lastTab: TabKey = "discover";
+
 export default function MusicScreen() {
   const { deviceType } = useResponsiveLayout();
   const isTV = deviceType === "tv";
   const router = useRouter();
-  const [tab, setTab] = useState<TabKey>("discover");
+  const [tab, setTabState] = useState<TabKey>(lastTab);
+  const setTab = (t: TabKey) => {
+    lastTab = t;
+    setTabState(t);
+  };
 
   // 返回键：回首页，而不是直接退出应用（音乐页是顶层导航栈底）
   useBackToHome();

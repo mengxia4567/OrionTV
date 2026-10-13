@@ -1,19 +1,37 @@
 // UpdateService.ts
 import * as FileSystem from 'expo-file-system';
 import * as IntentLauncher from 'expo-intent-launcher';
-// import * as Device from 'expo-device';
 import Toast from 'react-native-toast-message';
 import { version as currentVersion } from '../package.json';
 import { UPDATE_CONFIG } from '../constants/UpdateConfig';
 import Logger from '@/utils/Logger';
 import { Platform } from 'react-native';
+import { SettingsManager } from '@/services/storage';
+import { getStoredAuthToken } from '@/services/api';
+import { apkPatchAvailable, getBaseApkPath, applyPatch, sha256File } from '../modules/apk-patch';
 
 const logger = Logger.withTag('UpdateService');
 
-interface VersionInfo {
-  version: string;
-  downloadUrl: string;
+interface PatchInfo {
+  url: string;
+  size: number;
+  sha256: string;
 }
+
+export interface VersionInfo {
+  version: string;
+  /** 整包下载地址 */
+  downloadUrl: string;
+  apkSize: number;
+  apkSha256: string;
+  /** 从当前已装版本到最新版本的增量补丁（没有或本机不支持则为 null，走整包） */
+  patch: PatchInfo | null;
+  /** 请求头（登录令牌） */
+  headers: Record<string, string>;
+}
+
+/** 本次实际采用的更新方式 */
+export type UpdateMode = 'patch' | 'full';
 
 /**
  * 只在 Android 平台使用的常量（iOS 不会走到下载/安装流程）
@@ -30,43 +48,61 @@ class UpdateService {
   }
 
   /** --------------------------------------------------------------
-   *  1️⃣ 远程版本检查（保持不变，只是把 fetch 包装成 async/await）
+   *  1️⃣ 远程版本检查：读服务器上的 latest.json（登录令牌校验）
    * --------------------------------------------------------------- */
+  private async getBases(): Promise<string[]> {
+    const bases: string[] = [];
+    try {
+      const s = await SettingsManager.get();
+      const proxy = (s?.vodProxyUrl || '').trim().replace(/\/+$/, '');
+      const api = (s?.apiBaseUrl || '').trim().replace(/\/+$/, '');
+      if (proxy) bases.push(proxy);
+      if (api) bases.push(api);
+    } catch {
+      /* ignore */
+    }
+    return Array.from(new Set(bases));
+  }
+
   async checkVersion(): Promise<VersionInfo> {
-    const maxRetries = 3;
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10_000);
-        const response = await fetch(UPDATE_CONFIG.GITHUB_RAW_URL, {
-          signal: controller.signal,
-        });
-        clearTimeout(timeoutId);
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-        const remotePackage = await response.json();
-        const remoteVersion = remotePackage.version as string;
-        return {
-          version: remoteVersion,
-          downloadUrl: UPDATE_CONFIG.getDownloadUrl(remoteVersion),
-        };
-      } catch (e) {
-        logger.warn(`checkVersion attempt ${attempt}/${maxRetries}`, e);
-        if (attempt === maxRetries) {
-          Toast.show({
-            type: 'error',
-            text1: '检查更新失败',
-            text2: '无法获取版本信息，请检查网络',
+    const bases = await this.getBases();
+    if (bases.length === 0) {
+      Toast.show({ type: 'error', text1: '检查更新失败', text2: '请先在设置里填写服务器地址' });
+      throw new Error('未配置服务器地址');
+    }
+    const token = await getStoredAuthToken().catch(() => null);
+    const headers: Record<string, string> = token ? { Authorization: `Token ${token}` } : {};
+    let lastErr: unknown = null;
+    for (const base of bases) {
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 10_000);
+          const response = await fetch(`${base}${UPDATE_CONFIG.MANIFEST_PATH}?t=${Date.now()}`, {
+            headers,
+            signal: controller.signal,
           });
-          throw e;
+          clearTimeout(timeoutId);
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          const m = await response.json();
+          const p = m?.patches?.[currentVersion];
+          return {
+            version: m.version as string,
+            downloadUrl: `${base}/appupdate/${m.apk.file}`,
+            apkSize: m.apk.size,
+            apkSha256: m.apk.sha256,
+            patch: p ? { url: `${base}/appupdate/${p.file}`, size: p.size, sha256: p.sha256 } : null,
+            headers,
+          };
+        } catch (e) {
+          lastErr = e;
+          logger.warn(`checkVersion ${base} attempt ${attempt}`, e);
+          await new Promise(r => setTimeout(r, 1_500 * attempt));
         }
-        // 指数退避
-        await new Promise(r => setTimeout(r, 2_000 * attempt));
       }
     }
-    // 这句永远走不到，仅为 TypeScript 报错
-    throw new Error('Unexpected');
+    Toast.show({ type: 'error', text1: '检查更新失败', text2: '无法获取版本信息，请检查网络或登录状态' });
+    throw lastErr instanceof Error ? lastErr : new Error('检查更新失败');
   }
 
   /** --------------------------------------------------------------
@@ -110,6 +146,7 @@ class UpdateService {
   async downloadApk(
     url: string,
     onProgress?: (percent: number) => void,
+    headers: Record<string, string> = {},
   ): Promise<string> {
     const maxRetries = 3;
     await this.cleanOldApkFiles();
@@ -124,10 +161,7 @@ class UpdateService {
         const downloadResumable = FileSystem.createDownloadResumable(
           url,
           fileUri,
-          {
-            // Android 需要在 AndroidManifest 中声明 INTERNET、WRITE_EXTERNAL_STORAGE (API 33+ 使用 MANAGE_EXTERNAL_STORAGE)
-            // 这里不使用系统下载管理器，因为我们想自己控制进度回调。
-          },
+          { headers },
           progress => {
             if (onProgress && progress.totalBytesExpectedToWrite) {
               const percent = Math.floor(
@@ -161,6 +195,53 @@ class UpdateService {
     }
     // 同上，理论不会到这里
     throw new Error('Download failed');
+  }
+
+  /** --------------------------------------------------------------
+   *  3️⃣b 智能更新：优先下载增量补丁并在本机还原出新 APK；任何一步失败自动回退整包
+   * --------------------------------------------------------------- */
+  async fetchUpdate(
+    info: VersionInfo,
+    onProgress?: (percent: number) => void,
+    onMode?: (mode: UpdateMode) => void,
+  ): Promise<string> {
+    if (info.patch && apkPatchAvailable && Platform.OS === 'android') {
+      try {
+        onMode?.('patch');
+        const dir = FileSystem.documentDirectory;
+        if (!dir) throw new Error('no documentDirectory');
+        await this.cleanOldApkFiles();
+        const patchPath = `${dir}update_patch.bsz`;
+        const outPath = `${dir}OrionTV_v${Date.now()}.apk`;
+        await FileSystem.deleteAsync(patchPath, { idempotent: true });
+        const dl = FileSystem.createDownloadResumable(info.patch.url, patchPath, { headers: info.headers }, p => {
+          if (onProgress && p.totalBytesExpectedToWrite) {
+            // 补丁下载占 90%，还原占 10%
+            onProgress(Math.floor((p.totalBytesWritten / p.totalBytesExpectedToWrite) * 90));
+          }
+        });
+        const r = await dl.downloadAsync();
+        if (!r?.uri) throw new Error('patch download failed');
+        const got = await sha256File(patchPath);
+        if (got !== info.patch.sha256) throw new Error('patch sha256 mismatch');
+        onProgress?.(92);
+        const outSha = await applyPatch(getBaseApkPath(), patchPath, outPath);
+        await FileSystem.deleteAsync(patchPath, { idempotent: true });
+        if (outSha !== info.apkSha256) {
+          await FileSystem.deleteAsync(outPath, { idempotent: true });
+          throw new Error('patched apk sha256 mismatch');
+        }
+        onProgress?.(100);
+        logger.debug(`patched apk ready: ${outPath}`);
+        return outPath;
+      } catch (e) {
+        logger.warn('增量更新失败，回退整包', e);
+        Toast.show({ type: 'info', text1: '增量更新不可用', text2: '改为下载完整安装包' });
+      }
+    }
+    onMode?.('full');
+    onProgress?.(0);
+    return this.downloadApk(info.downloadUrl, onProgress, info.headers);
   }
 
   /** --------------------------------------------------------------

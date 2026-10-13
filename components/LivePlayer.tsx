@@ -16,23 +16,41 @@ interface LivePlayerProps {
   hideFullscreenButton?: boolean;
   /** 手机/平板：视频真实尺寸回调（应用内全屏据此决定横/竖） */
   onNaturalSize?: (size: NaturalSize) => void;
+  /** 画面缩放方式（默认适应；手机/平板全屏时由画面比例设置决定） */
+  resizeMode?: ResizeMode;
+  /** 加载失败状态变化（手机/平板由触控层显示「重试」按钮） */
+  onFailedChange?: (failed: boolean) => void;
 }
 
 /** 供外部（触控控制条）调用 */
 export interface LivePlayerHandle {
   toggleFullscreen: () => Promise<void>;
+  play: () => void;
+  pause: () => void;
+  retry: () => void;
 }
 
 const PLAYBACK_TIMEOUT = 15000; // 15 seconds
 
 const LivePlayer = forwardRef<LivePlayerHandle, LivePlayerProps>(function LivePlayer(
-  { streamUrl, channelTitle, onPlaybackStatusUpdate, shouldPlay = true, hideFullscreenButton = false, onNaturalSize },
-  ref
+  {
+    streamUrl,
+    channelTitle,
+    onPlaybackStatusUpdate,
+    shouldPlay = true,
+    hideFullscreenButton = false,
+    onNaturalSize,
+    resizeMode = ResizeMode.CONTAIN,
+    onFailedChange,
+  },
+  ref,
 ) {
   const video = useRef<Video>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isTimeout, setIsTimeout] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  /** 重试次数：变化时重新载入当前流 */
+  const [attempt, setAttempt] = useState(0);
   /** 视频真实尺寸：全屏时按比例决定横/竖（横屏内容 → 横屏） */
   const naturalSizeRef = useRef<NaturalSize | null>(null);
 
@@ -50,7 +68,12 @@ const LivePlayer = forwardRef<LivePlayerHandle, LivePlayerProps>(function LivePl
       void unlockAfterFullscreen();
     }
   };
-  useImperativeHandle(ref, () => ({ toggleFullscreen }));
+  useImperativeHandle(ref, () => ({
+    toggleFullscreen,
+    play: () => void video.current?.playAsync().catch(() => {}),
+    pause: () => void video.current?.pauseAsync().catch(() => {}),
+    retry: () => setAttempt((n) => n + 1),
+  }));
 
   const timeoutRef = useRef<NodeJS.Timeout | null>(null);
   useKeepAwake();
@@ -77,8 +100,11 @@ const LivePlayer = forwardRef<LivePlayerHandle, LivePlayerProps>(function LivePl
         clearTimeout(timeoutRef.current);
       }
     };
-  }, [streamUrl]);
+  }, [streamUrl, attempt]);
 
+  useEffect(() => {
+    onFailedChange?.(isTimeout);
+  }, [isTimeout, onFailedChange]);
 
   const handlePlaybackStatusUpdate = (status: AVPlaybackStatus) => {
     if (status.isLoaded) {
@@ -106,9 +132,7 @@ const LivePlayer = forwardRef<LivePlayerHandle, LivePlayerProps>(function LivePl
   if (!streamUrl) {
     return (
       <View style={styles.container}>
-        <Text style={styles.messageText}>
-          {Platform.isTV ? "按向下键选择频道" : "长按画面选择频道"}
-        </Text>
+        <Text style={styles.messageText}>{Platform.isTV ? "按向下键选择频道" : "长按画面选择频道"}</Text>
       </View>
     );
   }
@@ -116,7 +140,12 @@ const LivePlayer = forwardRef<LivePlayerHandle, LivePlayerProps>(function LivePl
   if (isTimeout) {
     return (
       <View style={styles.container}>
-        <Text style={styles.messageText}>加载失败，请重试</Text>
+        <Text style={styles.messageText}>加载失败</Text>
+        {Platform.isTV ? (
+          <Pressable style={styles.retryBtn} onPress={() => setAttempt((n) => n + 1)} focusable hasTVPreferredFocus>
+            <Text style={styles.retryText}>重试</Text>
+          </Pressable>
+        ) : null}
       </View>
     );
   }
@@ -124,12 +153,13 @@ const LivePlayer = forwardRef<LivePlayerHandle, LivePlayerProps>(function LivePl
   return (
     <View style={styles.container}>
       <Video
+        key={attempt}
         ref={video}
         style={styles.video}
         source={{
           uri: streamUrl,
         }}
-        resizeMode={ResizeMode.CONTAIN}
+        resizeMode={resizeMode}
         shouldPlay={shouldPlay}
         onReadyForDisplay={(e) => {
           const ns = e?.naturalSize;
@@ -208,6 +238,15 @@ const styles = StyleSheet.create({
     fontSize: 16,
     marginTop: 10,
   },
+  retryBtn: {
+    marginTop: 16,
+    minWidth: 120,
+    paddingVertical: 10,
+    borderRadius: 8,
+    alignItems: "center",
+    backgroundColor: "#00bb5e",
+  },
+  retryText: { color: "#fff", fontSize: 16, fontWeight: "600" },
   fullscreenBtn: {
     position: "absolute",
     right: 16,

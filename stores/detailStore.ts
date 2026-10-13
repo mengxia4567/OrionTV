@@ -26,6 +26,7 @@ interface DetailState {
   abort: () => void;
   toggleFavorite: () => Promise<void>;
   markSourceAsFailed: (source: string, reason: string) => void;
+  clearFailedSources: () => void;
   getNextAvailableSource: (currentSource: string, episodeIndex: number) => SearchResultWithResolution | null;
 }
 
@@ -42,8 +43,6 @@ const useDetailStore = create<DetailState>((set, get) => ({
   failedSources: new Set(),
 
   init: async (q, preferredSource, id) => {
-    const perfStart = performance.now();
-    logger.info(`[PERF] DetailStore.init START - q: ${q}, preferredSource: ${preferredSource}, id: ${id}`);
     
     const { controller: oldController } = get();
     if (oldController) {
@@ -72,13 +71,10 @@ const useDetailStore = create<DetailState>((set, get) => ({
     };
 
     const processAndSetResults = async (results: SearchResult[], merge = false) => {
-      const resolutionStart = performance.now();
-      logger.info(`[PERF] Resolution detection START - processing ${results.length} sources`);
       
       const resultsWithResolution = await Promise.all(
         results.map(async (searchResult) => {
           let resolution;
-          const m3u8Start = performance.now();
           try {
             if (searchResult.episodes && searchResult.episodes.length > 0) {
               resolution = await getResolutionFromM3U8(searchResult.episodes[0], signal);
@@ -88,14 +84,9 @@ const useDetailStore = create<DetailState>((set, get) => ({
               logger.info(`Failed to get resolution for ${searchResult.source_name}`, e);
             }
           }
-          const m3u8End = performance.now();
-          logger.info(`[PERF] M3U8 resolution for ${searchResult.source_name}: ${(m3u8End - m3u8Start).toFixed(2)}ms (${resolution || 'failed'})`);
           return { ...searchResult, resolution };
         })
       );
-      
-      const resolutionEnd = performance.now();
-      logger.info(`[PERF] Resolution detection COMPLETE - took ${(resolutionEnd - resolutionStart).toFixed(2)}ms`);
 
       if (signal.aborted) return;
 
@@ -122,8 +113,6 @@ const useDetailStore = create<DetailState>((set, get) => ({
     try {
       // Optimization for favorite navigation
       if (preferredSource && id) {
-        const searchPreferredStart = performance.now();
-        logger.info(`[PERF] API searchVideo (preferred) START - source: ${preferredSource}, query: "${q}"`);
         
         let preferredResult: SearchResult[] = [];
         let preferredSearchError: any = null;
@@ -135,10 +124,7 @@ const useDetailStore = create<DetailState>((set, get) => ({
           preferredSearchError = error;
           logger.error(`[ERROR] API searchVideo (preferred) FAILED - source: ${preferredSource}, error:`, error);
         }
-        
-        const searchPreferredEnd = performance.now();
-        logger.info(`[PERF] API searchVideo (preferred) END - took ${(searchPreferredEnd - searchPreferredStart).toFixed(2)}ms, results: ${preferredResult.length}, error: ${!!preferredSearchError}`);
-        
+
         if (signal.aborted) return;
         
         // 检查preferred source结果
@@ -155,13 +141,9 @@ const useDetailStore = create<DetailState>((set, get) => ({
           }
           
           // 立即尝试所有源，不再依赖后台搜索
-          const fallbackStart = performance.now();
-          logger.info(`[PERF] FALLBACK search (all sources) START - query: "${q}"`);
           
           try {
             const { results: allResults } = await api.searchVideos(q);
-            const fallbackEnd = performance.now();
-            logger.info(`[PERF] FALLBACK search END - took ${(fallbackEnd - fallbackStart).toFixed(2)}ms, total results: ${allResults.length}`);
             
             const filteredResults = allResults.filter(item => item.title === q);
             logger.info(`[FALLBACK] Filtered results: ${filteredResults.length} matches for "${q}"`);
@@ -188,15 +170,10 @@ const useDetailStore = create<DetailState>((set, get) => ({
         
         // 后台搜索（如果preferred source成功的话）
         if (preferredResult.length > 0) {
-          const searchAllStart = performance.now();
-          logger.info(`[PERF] API searchVideos (background) START`);
           
           try {
             const { results: allResults } = await api.searchVideos(q);
-            
-            const searchAllEnd = performance.now();
-            logger.info(`[PERF] API searchVideos (background) END - took ${(searchAllEnd - searchAllStart).toFixed(2)}ms, results: ${allResults.length}`);
-            
+
             if (signal.aborted) return;
             await processAndSetResults(allResults.filter(item => item.title === q), true);
           } catch (backgroundError) {
@@ -205,21 +182,14 @@ const useDetailStore = create<DetailState>((set, get) => ({
         }
       } else {
         // Standard navigation: fetch resources, then fetch details one by one
-        const resourcesStart = performance.now();
-        logger.info(`[PERF] API getResources START - query: "${q}"`);
         
         try {
           const allResources = await api.getResources(signal);
-          
-          const resourcesEnd = performance.now();
-          logger.info(`[PERF] API getResources END - took ${(resourcesEnd - resourcesStart).toFixed(2)}ms, resources: ${allResources.length}`);
-          
+
           const enabledResources = videoSource.enabledAll
             ? allResources
             : allResources.filter((r) => videoSource.sources[r.key]);
 
-          logger.info(`[PERF] Enabled resources: ${enabledResources.length}/${allResources.length}`);
-          
           if (enabledResources.length === 0) {
             logger.error(`[ERROR] No enabled resources available for search`);
             set({ 
@@ -233,10 +203,7 @@ const useDetailStore = create<DetailState>((set, get) => ({
           let totalResults = 0;
           const searchPromises = enabledResources.map(async (resource) => {
             try {
-              const searchStart = performance.now();
               const { results } = await api.searchVideo(q, resource.key, signal);
-              const searchEnd = performance.now();
-              logger.info(`[PERF] API searchVideo (${resource.name}) took ${(searchEnd - searchStart).toFixed(2)}ms, results: ${results.length}`);
               
               if (results.length > 0) {
                 totalResults += results.length;
@@ -277,7 +244,6 @@ const useDetailStore = create<DetailState>((set, get) => ({
         }
       }
 
-      const favoriteCheckStart = performance.now();
       const finalState = get();
       
       // 最终检查：如果所有搜索都完成但仍然没有结果
@@ -301,10 +267,7 @@ const useDetailStore = create<DetailState>((set, get) => ({
       } else {
         logger.warn(`[WARN] No detail found after all search attempts for "${q}"`);
       }
-      
-      const favoriteCheckEnd = performance.now();
-      logger.info(`[PERF] Favorite check took ${(favoriteCheckEnd - favoriteCheckStart).toFixed(2)}ms`);
-      
+
     } catch (e) {
       if ((e as Error).name !== "AbortError") {
         logger.error(`[ERROR] DetailStore.init caught unexpected error:`, e);
@@ -319,8 +282,6 @@ const useDetailStore = create<DetailState>((set, get) => ({
         logger.info(`[INFO] DetailStore.init cleanup completed`);
       }
       
-      const perfEnd = performance.now();
-      logger.info(`[PERF] DetailStore.init COMPLETE - total time: ${(perfEnd - perfStart).toFixed(2)}ms`);
     }
   },
 
@@ -364,6 +325,8 @@ const useDetailStore = create<DetailState>((set, get) => ({
     
     set({ failedSources: newFailedSources });
   },
+
+  clearFailedSources: () => set({ failedSources: new Set() }),
 
   getNextAvailableSource: (currentSource: string, episodeIndex: number) => {
     const { searchResults, failedSources } = get();

@@ -1,5 +1,5 @@
 /**
- * MiniPlayer — 全局迷你播放条（_layout 全局挂载 / 音乐页与各页共用）
+ * MiniPlayer — 音乐页内的迷你播放条（_layout 挂载，只在 /music 下显示）
  *
  * - 有「当前曲」且未打开全屏播放器时显示
  * - 电视端：底部通栏（大控件，遥控器可达：下键深入 → 播放/暂停/下一首/打开全屏）
@@ -8,6 +8,7 @@
  */
 import React from "react";
 import { Image, Pressable, StyleSheet, View } from "react-native";
+import { useSegments } from "expo-router";
 import { Music as MusicIcon, Pause, Play, SkipForward, X } from "lucide-react-native";
 
 import { ThemedText } from "@/components/ThemedText";
@@ -37,8 +38,10 @@ export default function MiniPlayer() {
   const next = useMusicStore((s) => s.next);
   const stop = useMusicStore((s) => s.stop);
   const setPlayerOpen = useMusicStore((s) => s.setPlayerOpen);
+  // 迷你播放条只在音乐页内出现；去其他页面不再悬浮（音乐仍在后台播放，通知栏可控）
+  const inMusic = useSegments()[0] === "music";
 
-  if (!current || playerOpen) return null;
+  if (!current || playerOpen || !inMusic) return null;
 
   const isMobile = deviceType === "mobile";
   const bar = isMobile ? styles.barMobile : styles.barTv;
@@ -47,49 +50,45 @@ export default function MiniPlayer() {
     <View style={[styles.wrap, isMobile ? styles.wrapMobile : styles.wrapTv]} pointerEvents="box-none">
       <View style={[styles.bar, bar]}>
         <ProgressLine height={isMobile ? 2 : 3} />
-        <Pressable style={styles.main} onPress={() => setPlayerOpen(true)} focusable>
-          <View style={styles.coverBox}>
-            {current.cover ? (
-              <Image source={{ uri: current.cover }} style={styles.cover} resizeMode="cover" />
-            ) : (
-              <MusicIcon size={isMobile ? 20 : 26} color="#1DB954" />
-            )}
+        <View style={styles.row}>
+          <Pressable style={styles.main} onPress={() => setPlayerOpen(true)} focusable>
+            <View style={styles.coverBox}>
+              {current.cover ? (
+                <Image source={{ uri: current.cover }} style={styles.cover} resizeMode="cover" />
+              ) : (
+                <MusicIcon size={isMobile ? 20 : 26} color="#1DB954" />
+              )}
+            </View>
+            <View style={styles.meta}>
+              <ThemedText style={[styles.name, isMobile ? styles.nameMobile : styles.nameTv]} numberOfLines={1}>
+                {current.name}
+              </ThemedText>
+              <ThemedText style={styles.artist} numberOfLines={1}>
+                {current.artist}
+                {isLoading ? " · 加载中…" : ""}
+              </ThemedText>
+            </View>
+          </Pressable>
+          <View style={styles.controls}>
+            <StyledButton
+              onPress={() => void toggle()}
+              variant="primary"
+              style={isMobile ? styles.ctrlMobile : styles.ctrlTv}
+            >
+              {isPlaying ? (
+                <Pause size={isMobile ? 18 : 24} color="#fff" />
+              ) : (
+                <Play size={isMobile ? 18 : 24} color="#fff" />
+              )}
+            </StyledButton>
+            <StyledButton onPress={() => void next()} style={isMobile ? styles.ctrlMobile : styles.ctrlTv}>
+              <SkipForward size={isMobile ? 18 : 24} color="#fff" />
+            </StyledButton>
+            {/* 关闭：停止播放并清除当前曲目（迷你条随之隐藏） */}
+            <StyledButton onPress={() => void stop()} style={isMobile ? styles.ctrlMobile : styles.ctrlTv}>
+              <X size={isMobile ? 18 : 24} color="#B9BBC1" />
+            </StyledButton>
           </View>
-          <View style={styles.meta}>
-            <ThemedText style={[styles.name, isMobile ? styles.nameMobile : styles.nameTv]} numberOfLines={1}>
-              {current.name}
-            </ThemedText>
-            <ThemedText style={styles.artist} numberOfLines={1}>
-              {current.artist}
-              {isLoading ? " · 加载中…" : ""}
-            </ThemedText>
-          </View>
-        </Pressable>
-        <View style={styles.controls}>
-          <StyledButton
-            onPress={() => void toggle()}
-            variant="primary"
-            style={isMobile ? styles.ctrlMobile : styles.ctrlTv}
-          >
-            {isPlaying ? (
-              <Pause size={isMobile ? 18 : 24} color="#fff" />
-            ) : (
-              <Play size={isMobile ? 18 : 24} color="#fff" />
-            )}
-          </StyledButton>
-          <StyledButton
-            onPress={() => void next()}
-            style={isMobile ? styles.ctrlMobile : styles.ctrlTv}
-          >
-            <SkipForward size={isMobile ? 18 : 24} color="#fff" />
-          </StyledButton>
-          {/* 关闭：停止播放并清除当前曲目（迷你条随之隐藏） */}
-          <StyledButton
-            onPress={() => void stop()}
-            style={isMobile ? styles.ctrlMobile : styles.ctrlTv}
-          >
-            <X size={isMobile ? 18 : 24} color="#B9BBC1" />
-          </StyledButton>
         </View>
       </View>
     </View>
@@ -136,10 +135,15 @@ const styles = StyleSheet.create({
     backgroundColor: "#1DB954",
     height: "100%",
   },
-  main: {
+  row: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 14,
+  },
+  main: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    paddingLeft: 14,
     paddingVertical: 8,
     gap: 12,
   },
@@ -176,7 +180,8 @@ const styles = StyleSheet.create({
   controls: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 4,
+    paddingRight: 8,
   },
   ctrlMobile: {
     minWidth: 44,

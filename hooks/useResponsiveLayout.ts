@@ -14,18 +14,12 @@ export interface ResponsiveConfig {
   screenHeight: number;
 }
 
-const BREAKPOINTS = {
-  mobile: { min: 0, max: 767 },
-  tablet: { min: 768, max: 1023 },
-  tv: { min: 1024, max: Infinity },
-};
+/** 短边 ≥ 600dp 视为平板（Android 的 sw600dp 惯例）；电视只认系统 TV 标志 */
+const TABLET_MIN_SHORT_SIDE = 600;
 
-const getDeviceType = (width: number): DeviceType => {
+export const resolveDeviceType = (width: number, height: number): DeviceType => {
   if (Platform.isTV) return "tv";
-
-  if (width >= BREAKPOINTS.tv.min) return "tv";
-  if (width >= BREAKPOINTS.tablet.min) return "tablet";
-  return "mobile";
+  return Math.min(width, height) >= TABLET_MIN_SHORT_SIDE ? "tablet" : "mobile";
 };
 
 const getLayoutConfig = (
@@ -90,7 +84,7 @@ export const useResponsiveLayout = (): ResponsiveConfig => {
 
   const { width, height } = dimensions;
   const isPortrait = height > width;
-  const deviceType = getDeviceType(width);
+  const deviceType = resolveDeviceType(width, height);
 
   return getLayoutConfig(deviceType, width, height, isPortrait);
 };

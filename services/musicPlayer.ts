@@ -10,7 +10,6 @@
  *
  * ⚠️ 本文件会 import 原生模块，Jest 里请 mock；纯逻辑放在 utils/musicPlayerState.ts。
  */
-import { PermissionsAndroid, Platform } from "react-native";
 import TrackPlayer, { AppKilledPlaybackBehavior, Capability } from "react-native-track-player";
 
 import { parseDurationText } from "@/utils/musicPlayerState";
@@ -60,19 +59,6 @@ export function ensurePlayerReady(): Promise<void> {
     });
   })();
   return setupPromise;
-}
-
-/** Android 13+ 需要运行时授权通知，否则通知栏卡片不显示（播放本身不受影响）；每个进程只问一次 */
-let askedNotificationPermission = false;
-export async function ensureNotificationPermission(): Promise<void> {
-  if (askedNotificationPermission) return;
-  askedNotificationPermission = true;
-  if (Platform.OS !== "android" || Platform.isTV || Number(Platform.Version) < 33) return;
-  try {
-    await PermissionsAndroid.request("android.permission.POST_NOTIFICATIONS" as never);
-  } catch {
-    /* 拒绝/异常都不影响播放 */
-  }
 }
 
 /** 载入并开始播放一首曲（会先清空上一首）。resumeSec > 0 时在开播前定位到续播点。 */

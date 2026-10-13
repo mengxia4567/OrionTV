@@ -18,7 +18,11 @@ export function UpdateModal() {
     installUpdate,
     skipThisVersion,
     downloadedPath,
+    patchSize,
+    apkSize,
+    updateMode,
   } = useUpdateStore();
+  const mb = (n: number) => (n / 1048576).toFixed(1) + " MB";
 
   const updateButtonRef = React.useRef<View>(null);
   const laterButtonRef = React.useRef<View>(null);
@@ -73,12 +77,20 @@ export function UpdateModal() {
             <ThemedText style={[styles.versionText, styles.newVersion]}>新版本: v{remoteVersion}</ThemedText>
           </View>
 
+          {!downloading && !downloadedPath && (
+            <ThemedText style={styles.versionText}>
+              {patchSize > 0 ? `增量更新，仅需下载 ${mb(patchSize)}（完整包 ${mb(apkSize)}）` : apkSize > 0 ? `需下载完整安装包 ${mb(apkSize)}` : ""}
+            </ThemedText>
+          )}
+
           {downloading && (
             <View style={styles.progressContainer}>
               <View style={styles.progressBar}>
                 <View style={[styles.progressFill, { width: `${downloadProgress}%` }]} />
               </View>
-              <ThemedText style={styles.progressText}>{downloadProgress}%</ThemedText>
+              <ThemedText style={styles.progressText}>
+                {downloadProgress}% {updateMode === "patch" ? "· 增量更新" : updateMode === "full" ? "· 完整安装包" : ""}
+              </ThemedText>
             </View>
           )}
 

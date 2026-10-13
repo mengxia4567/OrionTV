@@ -108,10 +108,17 @@ const useAuthStore = create<AuthState>((set) => ({
         }
 
         // 3) 无法自动登录：弹出登录框（首次配置流程）
+        // 复核令牌：本次检查耗时期间用户可能刚好完成了手动登录，不能把已登录状态改回去
+        if (await getStoredAuthToken()) {
+          set({ isLoggedIn: true, isLoginModalVisible: false });
+          return;
+        }
         set({ isLoggedIn: false, isLoginModalVisible: true });
       } catch (error) {
         logger.error("Failed to check login status:", error);
-        if (error instanceof Error && error.message === "UNAUTHORIZED") {
+        if (await getStoredAuthToken()) {
+          set({ isLoggedIn: true, isLoginModalVisible: false });
+        } else if (error instanceof Error && error.message === "UNAUTHORIZED") {
           set({ isLoggedIn: false, isLoginModalVisible: true });
         } else {
           set({ isLoggedIn: false });
@@ -148,6 +155,7 @@ const recoverSession = async (): Promise<boolean> => {
     return recoverSessionPromise;
   }
   recoverSessionPromise = (async (): Promise<boolean> => {
+    const tokenBefore = await getStoredAuthToken();
     // 1) 用 refresh token 续期（保持同一设备会话，不产生新会话）
     const refreshed = await api.refreshToken();
     if (refreshed) {
@@ -170,7 +178,11 @@ const recoverSession = async (): Promise<boolean> => {
       }
     }
 
-    // 3) 无法自动恢复：回退到手动登录
+    // 3) 无法自动恢复：回退到手动登录（若恢复期间用户已手动登录，则直接视为成功，让原请求带新令牌重试）
+    const tokenNow = await getStoredAuthToken();
+    if (tokenNow && tokenNow !== tokenBefore) {
+      return true;
+    }
     useAuthStore.setState({ isLoggedIn: false, isLoginModalVisible: true });
     return false;
   })();

@@ -8,6 +8,8 @@ export type TopLevelRoute = '/' | '/live' | '/music' | '/search' | '/favorites' 
 interface RouterLike {
   replace: (href: any) => void;
   push: (href: any) => void;
+  back?: () => void;
+  canGoBack?: () => boolean;
 }
 
 /**
@@ -21,6 +23,12 @@ interface RouterLike {
  */
 export function navigateTopLevel(router: RouterLike, route: TopLevelRoute, pathname?: string) {
   if (pathname === route) return;
+  // 当前在该板块的二级页（如 /music/playlist）时再点同一个板块：回到板块首页（弹出二级页，
+  // 保留首页的分区/滚动位置），而不是 replace 出一个全新的首页实例
+  if (route !== '/' && pathname?.startsWith(route + '/') && router.canGoBack?.()) {
+    router.back?.();
+    return;
+  }
   try {
     router.replace(route as any);
   } catch (error) {

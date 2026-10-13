@@ -4,7 +4,7 @@
  * 点击行 = 从该行开始播放整单（onPlay 由调用方决定语义，默认 playQueue）
  */
 import React, { useState } from "react";
-import { ActivityIndicator, FlatList, Modal, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { FlatList, Modal, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { Music as MusicIcon, Plus, X } from "lucide-react-native";
 import Toast from "react-native-toast-message";
 

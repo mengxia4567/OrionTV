@@ -53,14 +53,6 @@ export default function SearchScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastMessage, targetPage]);
 
-  // useEffect(() => {
-  //   // Focus the text input when the screen loads
-  //   const timer = setTimeout(() => {
-  //     textInputRef.current?.focus();
-  //   }, 200);
-  //   return () => clearTimeout(timer);
-  // }, []);
-
   const handleSearch = async (searchText?: string) => {
     const term = typeof searchText === "string" ? searchText : keyword;
     if (!term.trim()) {

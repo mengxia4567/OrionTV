@@ -54,15 +54,6 @@ export const getPlayableUrl = (originalUrl: string | null): string | null => {
   if (!originalUrl) {
     return null;
   }
-  // In React Native, we use the proxy for all http streams to avoid potential issues.
-  // if (originalUrl.toLowerCase().startsWith('http://')) {
-  //   // Use the baseURL from the existing api instance.
-  //   if (!api.baseURL) {
-  //       console.warn("API base URL is not set. Cannot create proxy URL.")
-  //       return originalUrl; // Fallback to original URL
-  //   }
-  //   return `${api.baseURL}/proxy?url=${encodeURIComponent(originalUrl)}`;
-  // }
-  // HTTPS streams can be played directly.
+  // 直接使用原始地址（http 明文已在 AndroidManifest 放行）
   return originalUrl;
 };

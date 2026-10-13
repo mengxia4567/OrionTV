@@ -7,7 +7,6 @@ import { ThemedView } from "@/components/ThemedView";
 import { StyledButton } from "@/components/StyledButton";
 import { useThemeColor } from "@/hooks/useThemeColor";
 import { useSettingsStore } from "@/stores/settingsStore";
-// import useAuthStore from "@/stores/authStore";
 import { useRemoteControlStore } from "@/stores/remoteControlStore";
 import { APIConfigSection } from "@/components/settings/APIConfigSection";
 import { VodProxySection, VodProxySectionRef } from "@/components/settings/VodProxySection";
@@ -15,7 +14,6 @@ import { LiveStreamSection } from "@/components/settings/LiveStreamSection";
 import { RemoteInputSection } from "@/components/settings/RemoteInputSection";
 import { UpdateSection } from "@/components/settings/UpdateSection";
 import { useBackToHome } from "@/hooks/useBackToHome";
-// import { VideoSourceSection } from "@/components/settings/VideoSourceSection";
 import Toast from "react-native-toast-message";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { getCommonResponsiveStyles } from "@/utils/ResponsiveStyles";
@@ -108,65 +106,6 @@ export default function SettingsScreen() {
     setHasChanges(true);
   };
 
-  // const sections = [
-  //   // 远程输入配置 - 仅在非手机端显示
-  //   deviceType !== "mobile" && {
-  //     component: (
-  //       <RemoteInputSection
-  //         onChanged={markAsChanged}
-  //         onFocus={() => {
-  //           setCurrentFocusIndex(0);
-  //           setCurrentSection("remote");
-  //         }}
-  //       />
-  //     ),
-  //     key: "remote",
-  //   },
-  //   {
-  //     component: (
-  //       <APIConfigSection
-  //         ref={apiSectionRef}
-  //         onChanged={markAsChanged}
-  //         hideDescription={deviceType === "mobile"}
-  //         onFocus={() => {
-  //           setCurrentFocusIndex(1);
-  //           setCurrentSection("api");
-  //         }}
-  //       />
-  //     ),
-  //     key: "api",
-  //   },
-  //   // 直播源配置 - 仅在非手机端显示
-  //   deviceType !== "mobile" && {
-  //     component: (
-  //       <LiveStreamSection
-  //         ref={liveStreamSectionRef}
-  //         onChanged={markAsChanged}
-  //         onFocus={() => {
-  //           setCurrentFocusIndex(2);
-  //           setCurrentSection("livestream");
-  //         }}
-  //       />
-  //     ),
-  //     key: "livestream",
-  //   },
-  //   // {
-  //   //   component: (
-  //   //     <VideoSourceSection
-  //   //       onChanged={markAsChanged}
-  //   //       onFocus={() => {
-  //   //         setCurrentFocusIndex(3);
-  //   //         setCurrentSection("videoSource");
-  //   //       }}
-  //   //     />
-  //   //   ),
-  //   //   key: "videoSource",
-  //   // },
-  //   Platform.OS === "android" && {
-  //     component: <UpdateSection />,
-  //     key: "update",
-  //   },
-  // ].filter(Boolean);
   const rawSections = [
     deviceType !== "mobile" && {
       component: (
@@ -255,7 +194,6 @@ export default function SettingsScreen() {
   const dynamicStyles = createResponsiveStyles(deviceType, spacing, insets);
 
   const renderSettingsContent = () => (
-    // <KeyboardAvoidingView style={{ flex: 1, backgroundColor }} behavior={Platform.OS === "ios" ? "padding" : "height"}>
     <KeyboardAwareScrollView
       enableOnAndroid={true}
       extraScrollHeight={20}
@@ -306,7 +244,6 @@ export default function SettingsScreen() {
         </View>
       </ThemedView>
     </KeyboardAwareScrollView>
-    // </KeyboardAvoidingView>
   );
 
   // 根据设备类型决定是否包装在响应式导航中

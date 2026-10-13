@@ -21,8 +21,8 @@ import Logger from "@/utils/Logger";
 import { parseLrc, LyricLine } from "@/utils/lyrics";
 import { pickBestMatch, otherSource, sourceLabel } from "@/utils/musicSource";
 import { mapPlayerState, isTransitionalState } from "@/utils/musicPlayerState";
+import { ensureNotificationPermission } from "@/utils/notificationPermission";
 import {
-  ensureNotificationPermission,
   hasActiveTrack,
   isPlayerPlaying,
   loadAndPlay,

@@ -1,5 +1,16 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { View, FlatList, StyleSheet, ActivityIndicator, Modal, useTVEventHandler, HWEvent, Text, TextInput } from "react-native";
+import {
+  View,
+  FlatList,
+  StyleSheet,
+  ActivityIndicator,
+  Modal,
+  useTVEventHandler,
+  HWEvent,
+  Text,
+  TextInput,
+  AppState,
+} from "react-native";
 import LivePlayer, { LivePlayerHandle } from "@/components/LivePlayer";
 import LiveTouchControls from "@/components/LiveTouchControls";
 import { useMusicStore } from "@/stores/musicStore";
@@ -17,12 +28,14 @@ import { DeviceUtils } from "@/utils/DeviceUtils";
 import { ThemedText } from "@/components/ThemedText";
 import { useBackToHome } from "@/hooks/useBackToHome";
 import { useImmersiveFullscreen } from "@/hooks/useImmersiveFullscreen";
+import { useVideoFit } from "@/hooks/useVideoFit";
+import { useVideoSession } from "@/hooks/useVideoSession";
 import { useRouter, useFocusEffect } from "expo-router";
 
 export default function LiveScreen() {
   const { m3uUrl } = useSettingsStore();
   const router = useRouter();
-  
+
   // 响应式布局配置
   const responsiveConfig = useResponsiveLayout();
   const commonStyles = getCommonResponsiveStyles(responsiveConfig);
@@ -49,6 +62,7 @@ export default function LiveScreen() {
   const playerRef = useRef<LivePlayerHandle>(null);
   // 手机/平板：应用内沉浸式全屏（锁方向 + 隐藏系统栏 + 隐藏页头/底栏）；TV 沿用原生全屏
   const fullscreen = useImmersiveFullscreen();
+  const resizeMode = useVideoFit(fullscreen.naturalSize, fullscreen.isFullscreen);
 
   // 返回键：先关掉频道列表/源选择面板；都关着才回首页（不直接退出应用）
   useBackToHome(
@@ -66,14 +80,11 @@ export default function LiveScreen() {
         return true;
       }
       return false;
-    }, [isSourcePanelVisible, isChannelListVisible, fullscreen])
+    }, [isSourcePanelVisible, isChannelListVisible, fullscreen]),
   );
 
   /** 当前组的频道列表（换台在同一组内进行）；useMemo 保持引用稳定，避免 useCallback 依赖抖动 */
-  const currentGroupChannels = useMemo(
-    () => groupedChannels[selectedGroup] || [],
-    [groupedChannels, selectedGroup]
-  );
+  const currentGroupChannels = useMemo(() => groupedChannels[selectedGroup] || [], [groupedChannels, selectedGroup]);
   /** 筛选后的频道列表；筛选词为空时等同当前分组全量 */
   const visibleChannels = useMemo(() => {
     const kw = channelFilter.trim().toLowerCase();
@@ -96,9 +107,36 @@ export default function LiveScreen() {
         void useMusicStore.getState().toggle();
       }
       return () => setIsFocused(false);
-    }, [])
+    }, []),
   );
   const liveShouldPlay = isFocused && !musicIsPlaying;
+
+  // 通知栏 / 锁屏媒体卡片（手机、平板）：直播没有进度，上一台/下一台对应切台
+  const [livePlaying, setLivePlaying] = useState(false);
+  const [liveFailed, setLiveFailed] = useState(false);
+  useVideoSession({
+    enabled: isFocused && !!selectedChannelUrl,
+    title: currentEntry?.name ?? "",
+    subtitle: [selectedGroup, currentSourceIndex === 0 ? "" : `备源 ${currentSourceIndex}`].filter(Boolean).join(" · "),
+    canSkip: currentGroupChannels.length > 1,
+    isLive: true,
+    playing: livePlaying,
+    positionMs: 0,
+    durationMs: 0,
+    rate: 1,
+    onPlay: () => playerRef.current?.play(),
+    onPause: () => playerRef.current?.pause(),
+    onNext: () => changeChannelRef.current("next"),
+    onPrev: () => changeChannelRef.current("prev"),
+  });
+
+  // 离开 App（回桌面 / 息屏）时暂停直播；可在通知栏点播放继续（保持与点播一致）
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (st) => {
+      if (st !== "active") playerRef.current?.pause();
+    });
+    return () => sub.remove();
+  }, []);
 
   useEffect(() => {
     const loadChannels = async () => {
@@ -156,8 +194,11 @@ export default function LiveScreen() {
       setCurrentSourceIndex(0);
       showChannelTitle(list[newIndex].name);
     },
-    [currentGroupChannels, currentChannelIndex]
+    [currentGroupChannels, currentChannelIndex],
   );
+
+  const changeChannelRef = useRef(changeChannel);
+  changeChannelRef.current = changeChannel;
 
   /** 遥控器「上」键：打开当前频道的源选择（手动切备源） */
   const openSourcePanel = useCallback(() => {
@@ -179,12 +220,12 @@ export default function LiveScreen() {
       setChannelFilter("");
       showChannelTitle(channelGroups[next]);
     },
-    [channelGroups, selectedGroup]
+    [channelGroups, selectedGroup],
   );
 
   const handleTVEvent = useCallback(
     (event: HWEvent) => {
-      if (deviceType !== 'tv') return;
+      if (deviceType !== "tv") return;
       if (isChannelListVisible) return;
       if (event.eventType === "down") setIsChannelListVisible(true);
       else if (event.eventType === "up") openSourcePanel();
@@ -197,16 +238,11 @@ export default function LiveScreen() {
         else changeChannel("next");
       }
     },
-    [
-      changeChannel,
-      changeGroup,
-      isChannelListVisible,
-      deviceType,
-      openSourcePanel,
-    ]
+    [changeChannel, changeGroup, isChannelListVisible, deviceType, openSourcePanel],
   );
 
-  useTVEventHandler(deviceType === 'tv' ? handleTVEvent : () => {});
+  // 只在本页聚焦时响应遥控器：从「去设置」压栈到设置页后，底下的直播页不能再抢按键
+  useTVEventHandler(deviceType === "tv" && isFocused ? handleTVEvent : () => {});
 
   // 动态样式
   const dynamicStyles = createResponsiveStyles(deviceType, spacing);
@@ -217,10 +253,12 @@ export default function LiveScreen() {
         ref={playerRef}
         hideFullscreenButton={deviceType !== "tv"}
         onNaturalSize={fullscreen.setNaturalSize}
+        resizeMode={resizeMode}
+        onFailedChange={setLiveFailed}
         key={selectedChannelUrl || "live-empty"}
         streamUrl={selectedChannelUrl}
         channelTitle={channelTitle}
-        onPlaybackStatusUpdate={() => {}}
+        onPlaybackStatusUpdate={(st) => setLivePlaying(st.isLoaded && st.isPlaying)}
         shouldPlay={liveShouldPlay}
       />
       <Modal
@@ -274,9 +312,7 @@ export default function LiveScreen() {
                   <FlatList
                     data={visibleChannels}
                     keyExtractor={(item, index) => `${item.group}-${item.name}-${index}`}
-                    ListEmptyComponent={
-                      <Text style={dynamicStyles.emptyText}>没有匹配的频道</Text>
-                    }
+                    ListEmptyComponent={<Text style={dynamicStyles.emptyText}>没有匹配的频道</Text>}
                     renderItem={({ item, index }) => (
                       <StyledButton
                         text={
@@ -287,7 +323,7 @@ export default function LiveScreen() {
                         onPress={() =>
                           handleSelectChannel(
                             item,
-                            currentGroupChannels.findIndex((c) => c.name === item.name)
+                            currentGroupChannels.findIndex((c) => c.name === item.name),
                           )
                         }
                         isSelected={index === currentChannelIndex}
@@ -355,6 +391,8 @@ export default function LiveScreen() {
           onOpenSource={openSourcePanel}
           isFullscreen={fullscreen.isFullscreen}
           onToggleFullscreen={fullscreen.toggle}
+          failed={liveFailed}
+          onRetry={() => playerRef.current?.retry()}
         />
       ) : null}
     </>
@@ -377,10 +415,9 @@ export default function LiveScreen() {
   );
 
   // 根据设备类型决定是否包装在响应式导航中
-  if (deviceType === 'tv') {
+  if (deviceType === "tv") {
     return content;
   }
-
 
   return (
     <ResponsiveNavigation hideChrome={fullscreen.isFullscreen}>
@@ -391,8 +428,8 @@ export default function LiveScreen() {
 }
 
 const createResponsiveStyles = (deviceType: string, spacing: number) => {
-  const isMobile = deviceType === 'mobile';
-  const isTablet = deviceType === 'tablet';
+  const isMobile = deviceType === "mobile";
+  const isTablet = deviceType === "tablet";
   const minTouchTarget = DeviceUtils.getMinTouchTargetSize();
 
   return StyleSheet.create({
@@ -406,7 +443,7 @@ const createResponsiveStyles = (deviceType: string, spacing: number) => {
       backgroundColor: "transparent",
     },
     modalContent: {
-      width: isMobile ? '90%' : isTablet ? 400 : 450,
+      width: isMobile ? "90%" : isTablet ? 400 : 450,
       height: "100%",
       backgroundColor: "rgba(0, 0, 0, 0.85)",
       padding: spacing,
