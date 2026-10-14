@@ -10,6 +10,8 @@ import {
   Text,
   TextInput,
   AppState,
+  Pressable,
+  ScrollView,
 } from "react-native";
 import LivePlayer, { LivePlayerHandle } from "@/components/LivePlayer";
 import LiveTouchControls from "@/components/LiveTouchControls";
@@ -21,6 +23,7 @@ import { ThemedView } from "@/components/ThemedView";
 import { StyledButton } from "@/components/StyledButton";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
+import { Colors } from "@/constants/Colors";
 import { getCommonResponsiveStyles } from "@/utils/ResponsiveStyles";
 import ResponsiveNavigation from "@/components/navigation/ResponsiveNavigation";
 import ResponsiveHeader from "@/components/navigation/ResponsiveHeader";
@@ -293,34 +296,63 @@ export default function LiveScreen() {
             <Text style={dynamicStyles.modalTitle}>选择频道</Text>
             <View style={dynamicStyles.listContainer}>
               <View style={dynamicStyles.groupColumn}>
-                <FlatList
-                  data={channelGroups}
-                  horizontal={isMobileDevice}
-                  showsHorizontalScrollIndicator={false}
-                  keyExtractor={(item, index) => `group-${item}-${index}`}
-                  renderItem={({ item, index }) => (
-                    <StyledButton
-                      text={item}
-                      onPress={() => {
-                        setSelectedGroup(item);
-                        setCurrentChannelIndex(0);
-                        setCurrentSourceIndex(0);
-                        setChannelFilter("");
-                        setPreviewIndex(0);
-                      }}
-                      onFocus={() => {
-                        if (deviceType === "tv") {
+                {isMobileDevice ? (
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={dynamicStyles.groupChips}
+                  >
+                    {channelGroups.map((item, index) => (
+                      <Pressable
+                        key={`chip-${item}-${index}`}
+                        onPress={() => {
                           setSelectedGroup(item);
+                          setCurrentChannelIndex(0);
+                          setCurrentSourceIndex(0);
+                          setChannelFilter("");
                           setPreviewIndex(0);
-                        }
-                      }}
-                      isSelected={selectedGroup === item}
-                      hasTVPreferredFocus={index === currentGroupIndex}
-                      style={dynamicStyles.groupButton}
-                      textStyle={dynamicStyles.groupButtonText}
-                    />
-                  )}
-                />
+                        }}
+                        style={[dynamicStyles.groupChip, selectedGroup === item && dynamicStyles.groupChipActive]}
+                      >
+                        <Text
+                          style={[
+                            dynamicStyles.groupChipText,
+                            selectedGroup === item && dynamicStyles.groupChipTextActive,
+                          ]}
+                        >
+                          {item}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </ScrollView>
+                ) : (
+                  <FlatList
+                    data={channelGroups}
+                    keyExtractor={(item, index) => `group-${item}-${index}`}
+                    renderItem={({ item, index }) => (
+                      <StyledButton
+                        text={item}
+                        onPress={() => {
+                          setSelectedGroup(item);
+                          setCurrentChannelIndex(0);
+                          setCurrentSourceIndex(0);
+                          setChannelFilter("");
+                          setPreviewIndex(0);
+                        }}
+                        onFocus={() => {
+                          if (deviceType === "tv") {
+                            setSelectedGroup(item);
+                            setPreviewIndex(0);
+                          }
+                        }}
+                        isSelected={selectedGroup === item}
+                        hasTVPreferredFocus={index === currentGroupIndex}
+                        style={dynamicStyles.groupButton}
+                        textStyle={dynamicStyles.groupButtonText}
+                      />
+                    )}
+                  />
+                )}
               </View>
               <View style={dynamicStyles.channelColumn}>
                 {/* 频道筛选：手机/平板可直接输入；TV 不弹软键盘（提示用遥控左右切分组） */}
@@ -504,6 +536,30 @@ const createResponsiveStyles = (deviceType: string, spacing: number) => {
     listContainer: {
       flex: 1,
       flexDirection: isMobile ? "column" : "row",
+    },
+    /** 手机：分组横向芯片（不用 StyledButton：它在横向列表里会被拉伸、文字压成 5px） */
+    groupChips: {
+      paddingRight: spacing / 2,
+      alignItems: "center",
+    },
+    groupChip: {
+      paddingHorizontal: 14,
+      paddingVertical: 7,
+      borderRadius: 16,
+      backgroundColor: "#2C2D33",
+      marginRight: 8,
+    },
+    groupChipActive: {
+      backgroundColor: Colors.dark.primary,
+    },
+    groupChipText: {
+      fontSize: 14,
+      lineHeight: 20,
+      color: Colors.dark.text,
+    },
+    groupChipTextActive: {
+      color: Colors.dark.background,
+      fontWeight: "600",
     },
     groupColumn: {
       width: deviceType === "tv" ? 170 : undefined,
