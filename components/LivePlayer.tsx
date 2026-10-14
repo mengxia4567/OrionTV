@@ -5,6 +5,7 @@ import { Maximize } from "lucide-react-native";
 import { useKeepAwake } from "expo-keep-awake";
 import { lockForFullscreen, unlockAfterFullscreen } from "@/utils/fullscreenOrientation";
 import type { NaturalSize } from "@/utils/fullscreenPolicy";
+import { createStallTracker, trackPosition, shouldShowBuffering } from "@/utils/playbackStall";
 
 interface LivePlayerProps {
   streamUrl: string | null;
@@ -48,6 +49,11 @@ const LivePlayer = forwardRef<LivePlayerHandle, LivePlayerProps>(function LivePl
   const video = useRef<Video>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isTimeout, setIsTimeout] = useState(false);
+  /** 播放中的缓冲状态（是否真卡住由 shouldShowBuffering 结合播放位置判断） */
+  const [isBufferingRaw, setIsBufferingRaw] = useState(false);
+  const [isPlayingRaw, setIsPlayingRaw] = useState(false);
+  const stallRef = useRef(createStallTracker());
+  const [, setTick] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
   /** 重试次数：变化时重新载入当前流 */
   const [attempt, setAttempt] = useState(0);
@@ -83,6 +89,9 @@ const LivePlayer = forwardRef<LivePlayerHandle, LivePlayerProps>(function LivePl
       clearTimeout(timeoutRef.current);
     }
 
+    stallRef.current = createStallTracker();
+    setIsBufferingRaw(false);
+    setIsPlayingRaw(false);
     if (streamUrl) {
       setIsLoading(true);
       setIsTimeout(false);
@@ -103,19 +112,27 @@ const LivePlayer = forwardRef<LivePlayerHandle, LivePlayerProps>(function LivePl
   }, [streamUrl, attempt]);
 
   useEffect(() => {
+    // 位置停住时状态推送间隔较长，用定时器保证「停够 1.5 秒」后能及时显示加载圈
+    if (!isBufferingRaw) return;
+    const timer = setInterval(() => setTick((n) => n + 1), 500);
+    return () => clearInterval(timer);
+  }, [isBufferingRaw]);
+
+  useEffect(() => {
     onFailedChange?.(isTimeout);
   }, [isTimeout, onFailedChange]);
 
   const handlePlaybackStatusUpdate = (status: AVPlaybackStatus) => {
     if (status.isLoaded) {
+      trackPosition(stallRef.current, status.positionMillis, Date.now());
+      setIsBufferingRaw(status.isBuffering);
+      setIsPlayingRaw(status.isPlaying);
       if (status.isPlaying) {
         if (timeoutRef.current) {
           clearTimeout(timeoutRef.current);
         }
         setIsLoading(false);
         setIsTimeout(false);
-      } else if (status.isBuffering) {
-        setIsLoading(true);
       }
     } else {
       if (status.error) {
@@ -181,7 +198,7 @@ const LivePlayer = forwardRef<LivePlayerHandle, LivePlayerProps>(function LivePl
           setIsLoading(false);
         }}
       />
-      {isLoading && (
+      {(isLoading || shouldShowBuffering(isBufferingRaw, isPlayingRaw, stallRef.current, Date.now())) && (
         <View style={styles.loadingOverlay} pointerEvents="none">
           <ActivityIndicator size="large" color="#fff" />
           <Text style={styles.messageText}>加载中...</Text>

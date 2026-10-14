@@ -120,7 +120,7 @@ export const useApiConfig = () => {
 
 export const getApiConfigErrorMessage = (status: ApiConfigStatus): string => {
   if (status.needsConfiguration) {
-    return '请点击右上角设置按钮，配置您的服务器地址';
+    return '请先到「设置」页配置服务器地址';
   }
 
   if (status.error) {

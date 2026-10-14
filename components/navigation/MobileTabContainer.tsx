@@ -4,6 +4,7 @@ import { useRouter, usePathname } from 'expo-router';
 import { navigateTopLevel } from '@/utils/topLevelNav';
 import { Home, Search, Heart, Settings, Tv, Music } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
+import MiniPlayer from '@/components/music/MiniPlayer';
 import { useResponsiveLayout } from '@/hooks/useResponsiveLayout';
 import { DeviceUtils } from '@/utils/DeviceUtils';
 
@@ -57,6 +58,9 @@ const MobileTabContainer: React.FC<MobileTabContainerProps> = ({ children, hideC
         {children}
       </View>
       
+      {/* 音乐迷你播放条：紧贴底部导航栏上方（占布局空间，不遮挡内容） */}
+      {!hideChrome && <MiniPlayer variant="docked" />}
+
       {/* 底部导航栏 */}
       <View style={[dynamicStyles.tabBar, hideChrome && { display: 'none' }]}>
         {filteredTabs.map((tab) => {

@@ -119,7 +119,7 @@ export default function RootLayout() {
             <Stack.Screen name="+not-found" />
           </Stack>
           {/* 全局音乐层：迷你播放条 + 全屏播放器（跨页面常驻；由 musicStore 控制显隐） */}
-          <MiniPlayer />
+          <MiniPlayer variant="tv" />
           <FullPlayer />
         </View>
         <Toast />

@@ -4,6 +4,7 @@ import { useRouter, usePathname } from 'expo-router';
 import { navigateTopLevel } from '@/utils/topLevelNav';
 import { Home, Search, Heart, Settings, Tv, Menu, X, Music } from 'lucide-react-native';
 import { Colors } from '@/constants/Colors';
+import MiniPlayer from '@/components/music/MiniPlayer';
 import { useResponsiveLayout } from '@/hooks/useResponsiveLayout';
 import { DeviceUtils } from '@/utils/DeviceUtils';
 import { ThemedText } from '@/components/ThemedText';
@@ -150,7 +151,8 @@ const TabletSidebarNavigator: React.FC<TabletSidebarNavigatorProps> = ({
 
       {/* 主内容区域 */}
       <View style={dynamicStyles.content}>
-        {children}
+        <View style={{ flex: 1 }}>{children}</View>
+        {!hideChrome && <MiniPlayer variant="docked" />}
       </View>
     </View>
   );

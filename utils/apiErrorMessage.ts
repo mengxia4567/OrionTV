@@ -12,7 +12,7 @@ export function mapApiErrorMessage(err: unknown, fallback = "加载失败，请�
 
   switch (message) {
     case "API_URL_NOT_SET":
-      return "请点击右上角设置按钮，配置您的服务器地址";
+      return "请先到「设置」页配置服务器地址";
     case "UNAUTHORIZED":
       return "认证失败，请重新登录";
   }

@@ -28,6 +28,7 @@ import useDetailStore from "@/stores/detailStore";
 import { useAspectStore } from "@/stores/aspectStore";
 import { ASPECT_LABEL } from "@/utils/aspectMode";
 import { isDoubleTap } from "@/utils/liveGesture";
+import { createStallTracker, trackPosition, shouldShowBuffering } from "@/utils/playbackStall";
 import { clampSeek, isHorizontalDrag, LONG_PRESS_MS, LONG_PRESS_RATE, seekDeltaMs, tapZone } from "@/utils/vodGesture";
 
 interface Props {
@@ -106,7 +107,19 @@ export default function MobileVodControls({ isFullscreen, onToggleFullscreen, on
   const ratio = dragRatio ?? (duration > 0 ? Math.min(1, position / duration) : 0);
   positionRef.current = position;
   durationRef.current = duration;
-  const buffering = loaded && !!(status as { isBuffering?: boolean }).isBuffering && isPlaying !== false;
+  // expo-av 播放 HLS 时 isBuffering 常驻为 true，不能直接当作「卡住」：
+  // 只有没在播放、且播放位置确实停了一会儿，才显示加载圈
+  const stallRef = useRef(createStallTracker());
+  const now = Date.now();
+  if (loaded) trackPosition(stallRef.current, position, now);
+  const buffering =
+    loaded && shouldShowBuffering(!!(status as { isBuffering?: boolean }).isBuffering, !!isPlaying, stallRef.current, now);
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    // 位置停住时状态推送间隔较长，用定时器保证「停够 1.5 秒」后能及时显示
+    const timer = setInterval(() => setTick((n) => n + 1), 500);
+    return () => clearInterval(timer);
+  }, []);
 
   const armHide = useCallback(() => {
     if (hideTimer.current) clearTimeout(hideTimer.current);
