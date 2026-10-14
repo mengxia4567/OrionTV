@@ -40,6 +40,7 @@ export default function LiveScreen() {
   const responsiveConfig = useResponsiveLayout();
   const commonStyles = getCommonResponsiveStyles(responsiveConfig);
   const { deviceType, spacing } = responsiveConfig;
+  const isMobileDevice = deviceType === "mobile";
 
   // 频道按「主源 + 备源」归并后的结构（一个频道一条，默认主源）
   const [groupedChannels, setGroupedChannels] = useState<Record<string, ChannelEntry[]>>({});
@@ -57,6 +58,10 @@ export default function LiveScreen() {
   const currentGroupIndex = Math.max(0, channelGroups.indexOf(selectedGroup));
   const [isLoading, setIsLoading] = useState(false);
   const [isChannelListVisible, setIsChannelListVisible] = useState(false);
+  /** TV：列表里当前高亮的频道下标（用于右侧实时预览，不影响正在播放的频道） */
+  const [previewIndex, setPreviewIndex] = useState(0);
+  /** 预览流地址（防抖后的，避免快速上下移动时反复重连） */
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [channelTitle, setChannelTitle] = useState<string | null>(null);
   const titleTimer = useRef<NodeJS.Timeout | null>(null);
   const playerRef = useRef<LivePlayerHandle>(null);
@@ -92,6 +97,18 @@ export default function LiveScreen() {
     return currentGroupChannels.filter((e) => e.name.toLowerCase().includes(kw));
   }, [currentGroupChannels, channelFilter]);
   const currentEntry = currentGroupChannels[currentChannelIndex] || null;
+  /** TV 浏览列表时：主画面静音，右侧预览窗出声 */
+  const previewMode = deviceType === "tv" && isChannelListVisible;
+  const previewEntry = visibleChannels[Math.min(previewIndex, Math.max(0, visibleChannels.length - 1))] || null;
+  const previewPlayUrl = previewMode && previewEntry?.sources[0] ? getPlayableUrl(previewEntry.sources[0].url) : null;
+  useEffect(() => {
+    if (!previewPlayUrl) {
+      setPreviewUrl(null);
+      return;
+    }
+    const timer = setTimeout(() => setPreviewUrl(previewPlayUrl), 350);
+    return () => clearTimeout(timer);
+  }, [previewPlayUrl]);
   const currentSources = currentEntry?.sources || [];
   const currentSource = currentSources[currentSourceIndex] || null;
   const selectedChannelUrl = currentSource ? getPlayableUrl(currentSource.url) : null;
@@ -218,6 +235,7 @@ export default function LiveScreen() {
       setCurrentChannelIndex(0);
       setCurrentSourceIndex(0);
       setChannelFilter("");
+      setPreviewIndex(0);
       showChannelTitle(channelGroups[next]);
     },
     [channelGroups, selectedGroup],
@@ -227,8 +245,10 @@ export default function LiveScreen() {
     (event: HWEvent) => {
       if (deviceType !== "tv") return;
       if (isChannelListVisible) return;
-      if (event.eventType === "down") setIsChannelListVisible(true);
-      else if (event.eventType === "up") openSourcePanel();
+      if (event.eventType === "down") {
+        setPreviewIndex(currentChannelIndex);
+        setIsChannelListVisible(true);
+      } else if (event.eventType === "up") openSourcePanel();
       // 列表打开时：左右键切分组（列表内导航）；否则：左右键直接换台
       else if (event.eventType === "left") {
         if (isChannelListVisible) changeGroup("prev");
@@ -238,7 +258,7 @@ export default function LiveScreen() {
         else changeChannel("next");
       }
     },
-    [changeChannel, changeGroup, isChannelListVisible, deviceType, openSourcePanel],
+    [changeChannel, changeGroup, isChannelListVisible, deviceType, openSourcePanel, currentChannelIndex],
   );
 
   // 只在本页聚焦时响应遥控器：从「去设置」压栈到设置页后，底下的直播页不能再抢按键
@@ -257,9 +277,10 @@ export default function LiveScreen() {
         onFailedChange={setLiveFailed}
         key={selectedChannelUrl || "live-empty"}
         streamUrl={selectedChannelUrl}
-        channelTitle={channelTitle}
+        channelTitle={fullscreen.isFullscreen ? null : channelTitle}
         onPlaybackStatusUpdate={(st) => setLivePlaying(st.isLoaded && st.isPlaying)}
         shouldPlay={liveShouldPlay}
+        muted={previewMode}
       />
       <Modal
         animationType="slide"
@@ -274,6 +295,8 @@ export default function LiveScreen() {
               <View style={dynamicStyles.groupColumn}>
                 <FlatList
                   data={channelGroups}
+                  horizontal={isMobileDevice}
+                  showsHorizontalScrollIndicator={false}
                   keyExtractor={(item, index) => `group-${item}-${index}`}
                   renderItem={({ item, index }) => (
                     <StyledButton
@@ -283,6 +306,13 @@ export default function LiveScreen() {
                         setCurrentChannelIndex(0);
                         setCurrentSourceIndex(0);
                         setChannelFilter("");
+                        setPreviewIndex(0);
+                      }}
+                      onFocus={() => {
+                        if (deviceType === "tv") {
+                          setSelectedGroup(item);
+                          setPreviewIndex(0);
+                        }
                       }}
                       isSelected={selectedGroup === item}
                       hasTVPreferredFocus={index === currentGroupIndex}
@@ -315,6 +345,9 @@ export default function LiveScreen() {
                     ListEmptyComponent={<Text style={dynamicStyles.emptyText}>没有匹配的频道</Text>}
                     renderItem={({ item, index }) => (
                       <StyledButton
+                        onFocus={() => {
+                          if (deviceType === "tv") setPreviewIndex(index);
+                        }}
                         text={
                           item.sources.length > 1
                             ? `${item.name}（${item.sources.length} 源）`
@@ -326,8 +359,8 @@ export default function LiveScreen() {
                             currentGroupChannels.findIndex((c) => c.name === item.name),
                           )
                         }
-                        isSelected={index === currentChannelIndex}
-                        hasTVPreferredFocus={index === currentChannelIndex}
+                        isSelected={deviceType === "tv" ? previewIndex === index : index === currentChannelIndex}
+                        hasTVPreferredFocus={deviceType === "tv" && previewIndex === index}
                         style={dynamicStyles.channelItem}
                         textStyle={dynamicStyles.channelItemText}
                       />
@@ -335,6 +368,19 @@ export default function LiveScreen() {
                   />
                 )}
               </View>
+              {deviceType === "tv" ? (
+                <View style={dynamicStyles.previewColumn}>
+                  <LivePlayer
+                    key={previewUrl || "preview-empty"}
+                    streamUrl={previewUrl}
+                    channelTitle={previewEntry?.name ?? null}
+                    shouldPlay={!!previewUrl}
+                    hideFullscreenButton
+                    showStatusOverlay={false}
+                    onPlaybackStatusUpdate={() => {}}
+                  />
+                </View>
+              ) : null}
             </View>
           </View>
         </View>
@@ -367,8 +413,8 @@ export default function LiveScreen() {
           </View>
         </View>
       </Modal>
-      {/* 当前频道常驻角标：换台后不再"3 秒后无从确认"，始终可看 */}
-      {currentEntry && !isChannelListVisible ? (
+      {/* 当前频道角标：仅电视常驻（手机/平板由触控层展示，避免在全屏时占位） */}
+      {currentEntry && !isChannelListVisible && deviceType === "tv" ? (
         <View style={liveStyles.nowPlaying} pointerEvents="none">
           <ThemedText style={liveStyles.nowPlayingText}>
             {currentEntry.name}
@@ -443,7 +489,7 @@ const createResponsiveStyles = (deviceType: string, spacing: number) => {
       backgroundColor: "transparent",
     },
     modalContent: {
-      width: isMobile ? "90%" : isTablet ? 400 : 450,
+      width: isMobile ? "90%" : isTablet ? 400 : "100%",
       height: "100%",
       backgroundColor: "rgba(0, 0, 0, 0.85)",
       padding: spacing,
@@ -460,18 +506,29 @@ const createResponsiveStyles = (deviceType: string, spacing: number) => {
       flexDirection: isMobile ? "column" : "row",
     },
     groupColumn: {
-      flex: isMobile ? 0 : 1,
+      width: deviceType === "tv" ? 170 : undefined,
+      flex: isMobile ? 0 : deviceType === "tv" ? 0 : 1,
       marginRight: isMobile ? 0 : spacing / 2,
       marginBottom: isMobile ? spacing : 0,
-      maxHeight: isMobile ? 120 : undefined,
+      maxHeight: isMobile ? 48 : undefined,
     },
     channelColumn: {
-      flex: isMobile ? 1 : 2,
+      flex: isMobile ? 1 : deviceType === "tv" ? 0 : 2,
+      width: deviceType === "tv" ? 380 : undefined,
+    },
+    /** TV：右侧高亮频道实时预览 */
+    previewColumn: {
+      flex: 1,
+      marginLeft: spacing,
+      backgroundColor: "#000",
+      borderRadius: 8,
+      overflow: "hidden",
     },
     groupButton: {
       paddingVertical: isMobile ? minTouchTarget / 4 : 8,
       paddingHorizontal: spacing / 2,
-      marginVertical: isMobile ? 2 : 4,
+      marginVertical: isMobile ? 0 : 4,
+      marginRight: isMobile ? 6 : 0,
       minHeight: isMobile ? minTouchTarget * 0.7 : undefined,
     },
     groupButtonText: {

@@ -21,6 +21,10 @@ interface LivePlayerProps {
   resizeMode?: ResizeMode;
   /** 加载失败状态变化（手机/平板由触控层显示「重试」按钮） */
   onFailedChange?: (failed: boolean) => void;
+  /** 静音（TV 浏览频道列表时主画面静音，声音交给预览窗） */
+  muted?: boolean;
+  /** 是否显示加载/失败覆盖层（TV 预览窗关掉：避免转圈干扰与「重试」按钮抢焦点） */
+  showStatusOverlay?: boolean;
 }
 
 /** 供外部（触控控制条）调用 */
@@ -43,6 +47,8 @@ const LivePlayer = forwardRef<LivePlayerHandle, LivePlayerProps>(function LivePl
     onNaturalSize,
     resizeMode = ResizeMode.CONTAIN,
     onFailedChange,
+    muted = false,
+    showStatusOverlay = true,
   },
   ref,
 ) {
@@ -154,7 +160,7 @@ const LivePlayer = forwardRef<LivePlayerHandle, LivePlayerProps>(function LivePl
     );
   }
 
-  if (isTimeout) {
+  if (isTimeout && showStatusOverlay) {
     return (
       <View style={styles.container}>
         <Text style={styles.messageText}>加载失败</Text>
@@ -178,6 +184,7 @@ const LivePlayer = forwardRef<LivePlayerHandle, LivePlayerProps>(function LivePl
         }}
         resizeMode={resizeMode}
         shouldPlay={shouldPlay}
+        isMuted={muted}
         onReadyForDisplay={(e) => {
           const ns = e?.naturalSize;
           if (ns && ns.width > 0 && ns.height > 0) {
@@ -198,12 +205,13 @@ const LivePlayer = forwardRef<LivePlayerHandle, LivePlayerProps>(function LivePl
           setIsLoading(false);
         }}
       />
-      {(isLoading || shouldShowBuffering(isBufferingRaw, isPlayingRaw, stallRef.current, Date.now())) && (
-        <View style={styles.loadingOverlay} pointerEvents="none">
-          <ActivityIndicator size="large" color="#fff" />
-          <Text style={styles.messageText}>加载中...</Text>
-        </View>
-      )}
+      {showStatusOverlay &&
+        (isLoading || shouldShowBuffering(isBufferingRaw, isPlayingRaw, stallRef.current, Date.now())) && (
+          <View style={styles.loadingOverlay} pointerEvents="none">
+            <ActivityIndicator size="large" color="#fff" />
+            <Text style={styles.messageText}>加载中...</Text>
+          </View>
+        )}
       {channelTitle && !isLoading && !isTimeout && (
         <View style={styles.overlay} pointerEvents="none">
           <Text style={styles.title}>{channelTitle}</Text>
