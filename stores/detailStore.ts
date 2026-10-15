@@ -1,16 +1,23 @@
 import { create } from "zustand";
 import { SearchResult, api } from "@/services/api";
-import { probeStream } from "@/services/m3u8";
+import { probeStream, measureVodPaths } from "@/services/m3u8";
+import { primeVodPathPrefs } from "@/services/vodPath";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { FavoriteManager } from "@/services/storage";
 import Logger from "@/utils/Logger";
 
-const logger = Logger.withTag('DetailStore');
+const logger = Logger.withTag("DetailStore");
 
 export type SearchResultWithResolution = SearchResult & {
   resolution?: string | null;
-  /** 首分片实测速度 KB/s（0 = 未测到） */
+  /** 当前链路首分片实测速度 KB/s（0 = 未测到） */
   speedKb?: number;
+  /** 直连实测速度 KB/s */
+  speedDirect?: number;
+  /** 经代理实测速度 KB/s */
+  speedProxy?: number;
+  /** 实测更快的链路（决定播放路径） */
+  path?: "direct" | "proxy";
 };
 
 interface DetailState {
@@ -21,6 +28,9 @@ interface DetailState {
     source_name: string;
     resolution: string | null | undefined;
     speedKb?: number;
+    speedDirect?: number;
+    speedProxy?: number;
+    path?: "direct" | "proxy";
   }[];
   detail: SearchResultWithResolution | null;
   loading: boolean;
@@ -52,7 +62,6 @@ const useDetailStore = create<DetailState>((set, get) => ({
   failedSources: new Set(),
 
   init: async (q, preferredSource, id) => {
-    
     const { controller: oldController } = get();
     if (oldController) {
       oldController.abort();
@@ -71,6 +80,7 @@ const useDetailStore = create<DetailState>((set, get) => ({
     });
 
     const { videoSource } = useSettingsStore.getState();
+    primeVodPathPrefs().catch(() => undefined);
 
     // 分辨率排序权重：数值越大越清晰；未知排最后
     const resRank = (r?: string | null): number => {
@@ -79,30 +89,41 @@ const useDetailStore = create<DetailState>((set, get) => ({
       return m ? parseInt(m[1], 10) : 0;
     };
     // 排序：先清晰度，再实测速度（同清晰度时快的在前）
-    const rankOf = (r: { resolution?: string | null; speedKb?: number }) => [
-      resRank(r.resolution),
-      r.speedKb ?? 0,
-    ];
+    const rankOf = (r: { resolution?: string | null; speedKb?: number }) => [resRank(r.resolution), r.speedKb ?? 0];
 
     const processAndSetResults = async (results: SearchResult[], merge = false) => {
-      
+      // 前 N 个源做「直连 vs 代理」双链路实测（谁快用谁，并按源记住）；
+      // 其余源只测默认链路，避免一次搜索发太多请求。
+      const DUAL_PROBE_LIMIT = 8;
       const resultsWithResolution = await Promise.all(
-        results.map(async (searchResult) => {
+        results.map(async (searchResult, idx) => {
           let resolution: string | null = null;
           let speedKb = 0;
+          let speedDirect: number | undefined;
+          let speedProxy: number | undefined;
+          let path: "direct" | "proxy" | undefined;
           try {
             if (searchResult.episodes && searchResult.episodes.length > 0) {
-              const probe = await probeStream(searchResult.episodes[0], signal);
-              resolution = probe.resolution;
-              speedKb = probe.speedKb;
+              if (idx < DUAL_PROBE_LIMIT) {
+                const m = await measureVodPaths(searchResult.episodes[0], searchResult.source, signal);
+                resolution = (m.chosen === "proxy" ? m.proxy : m.direct)?.resolution ?? m.direct.resolution;
+                speedDirect = m.direct.speedKb;
+                speedProxy = m.proxy?.speedKb;
+                speedKb = m.chosen === "proxy" ? (m.proxy?.speedKb ?? 0) : m.direct.speedKb;
+                path = m.chosen;
+              } else {
+                const probe = await probeStream(searchResult.episodes[0], signal);
+                resolution = probe.resolution;
+                speedKb = probe.speedKb;
+              }
             }
           } catch (e) {
             if ((e as Error).name !== "AbortError") {
               logger.info(`Failed to probe ${searchResult.source_name}`, e);
             }
           }
-          return { ...searchResult, resolution, speedKb };
-        })
+          return { ...searchResult, resolution, speedKb, speedDirect, speedProxy, path };
+        }),
       );
 
       if (signal.aborted) return;
@@ -126,6 +147,9 @@ const useDetailStore = create<DetailState>((set, get) => ({
             source_name: r.source_name,
             resolution: r.resolution,
             speedKb: r.speedKb ?? 0,
+            speedDirect: r.speedDirect,
+            speedProxy: r.speedProxy,
+            path: r.path,
           })),
           detail: state.detail ?? finalResults[0] ?? null,
         };
@@ -135,10 +159,9 @@ const useDetailStore = create<DetailState>((set, get) => ({
     try {
       // Optimization for favorite navigation
       if (preferredSource && id) {
-        
         let preferredResult: SearchResult[] = [];
         let preferredSearchError: any = null;
-        
+
         try {
           const response = await api.searchVideo(q, preferredSource, signal);
           preferredResult = response.results;
@@ -148,63 +171,71 @@ const useDetailStore = create<DetailState>((set, get) => ({
         }
 
         if (signal.aborted) return;
-        
+
         // 检查preferred source结果
         if (preferredResult.length > 0) {
-          logger.info(`[SUCCESS] Preferred source "${preferredSource}" found ${preferredResult.length} results for "${q}"`);
+          logger.info(
+            `[SUCCESS] Preferred source "${preferredSource}" found ${preferredResult.length} results for "${q}"`,
+          );
           await processAndSetResults(preferredResult, false);
           set({ loading: false });
         } else {
           // 降级策略：preferred source失败时立即尝试所有源
           if (preferredSearchError) {
-            logger.warn(`[FALLBACK] Preferred source "${preferredSource}" failed with error, trying all sources immediately`);
+            logger.warn(
+              `[FALLBACK] Preferred source "${preferredSource}" failed with error, trying all sources immediately`,
+            );
           } else {
-            logger.warn(`[FALLBACK] Preferred source "${preferredSource}" returned 0 results for "${q}", trying all sources immediately`);
+            logger.warn(
+              `[FALLBACK] Preferred source "${preferredSource}" returned 0 results for "${q}", trying all sources immediately`,
+            );
           }
-          
+
           // 立即尝试所有源，不再依赖后台搜索
-          
+
           try {
             const { results: allResults } = await api.searchVideos(q);
-            
-            const filteredResults = allResults.filter(item => item.title === q);
+
+            const filteredResults = allResults.filter((item) => item.title === q);
             logger.info(`[FALLBACK] Filtered results: ${filteredResults.length} matches for "${q}"`);
-            
+
             if (filteredResults.length > 0) {
               logger.info(`[SUCCESS] FALLBACK search found results, proceeding with ${filteredResults[0].source_name}`);
               await processAndSetResults(filteredResults, false);
               set({ loading: false });
             } else {
               logger.error(`[ERROR] FALLBACK search found no matching results for "${q}"`);
-              set({ 
+              set({
                 error: `未找到 "${q}" 的播放源，请检查标题或稍后重试`,
-                loading: false 
+                loading: false,
               });
             }
           } catch (fallbackError) {
             logger.error(`[ERROR] FALLBACK search FAILED:`, fallbackError);
-            set({ 
-              error: `搜索失败：${fallbackError instanceof Error ? fallbackError.message : '网络错误，请稍后重试'}`,
-              loading: false 
+            set({
+              error: `搜索失败：${fallbackError instanceof Error ? fallbackError.message : "网络错误，请稍后重试"}`,
+              loading: false,
             });
           }
         }
-        
+
         // 后台搜索（如果preferred source成功的话）
         if (preferredResult.length > 0) {
-          
           try {
             const { results: allResults } = await api.searchVideos(q);
 
             if (signal.aborted) return;
-            await processAndSetResults(allResults.filter(item => item.title === q), true);
+            await processAndSetResults(
+              allResults.filter((item) => item.title === q),
+              true,
+            );
           } catch (backgroundError) {
             logger.warn(`[WARN] Background search failed, but preferred source already succeeded:`, backgroundError);
           }
         }
       } else {
         // Standard navigation: fetch resources, then fetch details one by one
-        
+
         try {
           const allResources = await api.getResources(signal);
 
@@ -214,9 +245,9 @@ const useDetailStore = create<DetailState>((set, get) => ({
 
           if (enabledResources.length === 0) {
             logger.error(`[ERROR] No enabled resources available for search`);
-            set({ 
+            set({
               error: "没有可用的视频源，请检查设置或联系管理员",
-              loading: false 
+              loading: false,
             });
             return;
           }
@@ -226,7 +257,7 @@ const useDetailStore = create<DetailState>((set, get) => ({
           const searchPromises = enabledResources.map(async (resource) => {
             try {
               const { results } = await api.searchVideo(q, resource.key, signal);
-              
+
               if (results.length > 0) {
                 totalResults += results.length;
                 logger.info(`[SUCCESS] Source "${resource.name}" found ${results.length} results for "${q}"`);
@@ -245,35 +276,37 @@ const useDetailStore = create<DetailState>((set, get) => ({
           });
 
           await Promise.all(searchPromises);
-          
+
           // 检查是否找到任何结果
           if (totalResults === 0) {
             logger.error(`[ERROR] All sources returned 0 results for "${q}"`);
-            set({ 
+            set({
               error: `未找到 "${q}" 的播放源，请尝试其他关键词或稍后重试`,
-              loading: false 
+              loading: false,
             });
           } else {
             logger.info(`[SUCCESS] Standard search completed, total results: ${totalResults}`);
           }
         } catch (resourceError) {
           logger.error(`[ERROR] Failed to get resources:`, resourceError);
-          set({ 
-            error: `获取视频源失败：${resourceError instanceof Error ? resourceError.message : '网络错误，请稍后重试'}`,
-            loading: false 
+          set({
+            error: `获取视频源失败：${resourceError instanceof Error ? resourceError.message : "网络错误，请稍后重试"}`,
+            loading: false,
           });
           return;
         }
       }
 
       const finalState = get();
-      
+
       // 最终检查：如果所有搜索都完成但仍然没有结果
       if (finalState.searchResults.length === 0 && !finalState.error) {
         logger.error(`[ERROR] All search attempts completed but no results found for "${q}"`);
         set({ error: `未找到 "${q}" 的播放源，请检查标题拼写或稍后重试` });
       } else if (finalState.searchResults.length > 0) {
-        logger.info(`[SUCCESS] DetailStore.init completed successfully with ${finalState.searchResults.length} sources`);
+        logger.info(
+          `[SUCCESS] DetailStore.init completed successfully with ${finalState.searchResults.length} sources`,
+        );
       }
 
       if (finalState.detail) {
@@ -289,7 +322,6 @@ const useDetailStore = create<DetailState>((set, get) => ({
       } else {
         logger.warn(`[WARN] No detail found after all search attempts for "${q}"`);
       }
-
     } catch (e) {
       if ((e as Error).name !== "AbortError") {
         logger.error(`[ERROR] DetailStore.init caught unexpected error:`, e);
@@ -303,7 +335,6 @@ const useDetailStore = create<DetailState>((set, get) => ({
         set({ loading: false, allSourcesLoaded: true });
         logger.info(`[INFO] DetailStore.init cleanup completed`);
       }
-      
     }
   },
 
@@ -341,10 +372,10 @@ const useDetailStore = create<DetailState>((set, get) => ({
     const { failedSources } = get();
     const newFailedSources = new Set(failedSources);
     newFailedSources.add(source);
-    
+
     logger.warn(`[SOURCE_FAILED] Marking source "${source}" as failed due to: ${reason}`);
     logger.info(`[SOURCE_FAILED] Total failed sources: ${newFailedSources.size}`);
-    
+
     set({ failedSources: newFailedSources });
   },
 
@@ -352,48 +383,53 @@ const useDetailStore = create<DetailState>((set, get) => ({
 
   getNextAvailableSource: (currentSource: string, episodeIndex: number) => {
     const { searchResults, failedSources } = get();
-    
+
     logger.info(`[SOURCE_SELECTION] Looking for alternative to "${currentSource}" for episode ${episodeIndex + 1}`);
-    logger.info(`[SOURCE_SELECTION] Failed sources: [${Array.from(failedSources).join(', ')}]`);
-    
+    logger.info(`[SOURCE_SELECTION] Failed sources: [${Array.from(failedSources).join(", ")}]`);
+
     // 过滤掉当前source和已失败的sources
-    const availableSources = searchResults.filter(result => 
-      result.source !== currentSource && 
-      !failedSources.has(result.source) &&
-      result.episodes && 
-      result.episodes.length > episodeIndex
+    const availableSources = searchResults.filter(
+      (result) =>
+        result.source !== currentSource &&
+        !failedSources.has(result.source) &&
+        result.episodes &&
+        result.episodes.length > episodeIndex,
     );
-    
+
     logger.info(`[SOURCE_SELECTION] Available sources: ${availableSources.length}`);
-    availableSources.forEach(source => {
-      logger.info(`[SOURCE_SELECTION] - ${source.source} (${source.source_name}): ${source.episodes?.length || 0} episodes`);
+    availableSources.forEach((source) => {
+      logger.info(
+        `[SOURCE_SELECTION] - ${source.source} (${source.source_name}): ${source.episodes?.length || 0} episodes`,
+      );
     });
-    
+
     if (availableSources.length === 0) {
       logger.error(`[SOURCE_SELECTION] No available sources for episode ${episodeIndex + 1}`);
       return null;
     }
-    
+
     // 优先选择有高分辨率的source
     const sortedSources = availableSources.sort((a, b) => {
-      const aResolution = a.resolution || '';
-      const bResolution = b.resolution || '';
-      
+      const aResolution = a.resolution || "";
+      const bResolution = b.resolution || "";
+
       // 优先级: 1080p > 720p > 其他 > 无分辨率
       const resolutionPriority = (res: string) => {
-        if (res.includes('1080')) return 4;
-        if (res.includes('720')) return 3;
-        if (res.includes('480')) return 2;
-        if (res.includes('360')) return 1;
+        if (res.includes("1080")) return 4;
+        if (res.includes("720")) return 3;
+        if (res.includes("480")) return 2;
+        if (res.includes("360")) return 1;
         return 0;
       };
-      
+
       return resolutionPriority(bResolution) - resolutionPriority(aResolution);
     });
-    
+
     const selectedSource = sortedSources[0];
-    logger.info(`[SOURCE_SELECTION] Selected fallback source: ${selectedSource.source} (${selectedSource.source_name}) with resolution: ${selectedSource.resolution || 'unknown'}`);
-    
+    logger.info(
+      `[SOURCE_SELECTION] Selected fallback source: ${selectedSource.source} (${selectedSource.source_name}) with resolution: ${selectedSource.resolution || "unknown"}`,
+    );
+
     return selectedSource;
   },
 }));

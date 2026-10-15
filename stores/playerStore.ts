@@ -4,14 +4,21 @@ import { AVPlaybackStatus, Video } from "expo-av";
 import { RefObject } from "react";
 import { PlayRecord, PlayRecordManager, PlayerSettingsManager } from "@/services/storage";
 import useDetailStore, { episodesSelectorBySource } from "./detailStore";
-import Logger from '@/utils/Logger';
+import Logger from "@/utils/Logger";
 import { api, unwrapVodProxyUrl } from "@/services/api";
+import { getVodPathSync, primeVodPathPrefs } from "@/services/vodPath";
 
-const logger = Logger.withTag('PlayerStore');
+// 预热链路偏好缓存（播放路径上是同步读取）
+primeVodPathPrefs().catch(() => undefined);
 
-// 点播 m3u8 默认走服务端代理（服务端会 302 到媒体加速代理；失败自动回退原始地址）
+const logger = Logger.withTag("PlayerStore");
+
+// 点播链路：默认走服务端代理；若该源实测「直连更快」（vodPath 里记着），则直连播放。
+// 结论来自 App 自己的双链路测速（services/m3u8.ts measureVodPaths），只认设备真实网络。
 const toPlayUrl = (ep: string): string => {
   try {
+    const source = useDetailStore.getState().detail?.source ?? "";
+    if (getVodPathSync(source) === "direct") return ep;
     return api.getVodProxyUrl(ep);
   } catch {
     return ep;
@@ -72,7 +79,7 @@ interface PlayerState {
   _isRecordSaveThrottled: boolean;
   // Internal helper
   _savePlayRecord: (updates?: Partial<PlayRecord>, options?: { immediate?: boolean }) => void;
-  handleVideoError: (errorType: 'ssl' | 'network' | 'other', failedUrl: string) => Promise<void>;
+  handleVideoError: (errorType: "ssl" | "network" | "other", failedUrl: string) => Promise<void>;
 }
 
 const usePlayerStore = create<PlayerState>((set, get) => ({
@@ -101,10 +108,9 @@ const usePlayerStore = create<PlayerState>((set, get) => ({
   setVideoRef: (ref) => set({ videoRef: ref }),
 
   loadVideo: async ({ source, id, episodeIndex, position, title }) => {
-    
     let detail = useDetailStore.getState().detail;
     let episodes: string[] = [];
-    
+
     // 如果有detail，使用detail的source获取episodes；否则使用传入的source
     if (detail && detail.source) {
       logger.info(`[INFO] Using existing detail source "${detail.source}" to get episodes`);
@@ -121,19 +127,18 @@ const usePlayerStore = create<PlayerState>((set, get) => ({
     const needsDetailInit = !detail || !episodes || episodes.length === 0 || detail.title !== title;
 
     if (needsDetailInit) {
-      
       await useDetailStore.getState().init(title, source, id);
 
       detail = useDetailStore.getState().detail;
-      
+
       if (!detail) {
         logger.error(`[ERROR] Detail not found after initialization for "${title}" (source: ${source}, id: ${id})`);
-        
+
         // 检查DetailStore的错误状态
         const detailStoreState = useDetailStore.getState();
         if (detailStoreState.error) {
           logger.error(`[ERROR] DetailStore error: ${detailStoreState.error}`);
-          set({ 
+          set({
             isLoading: false,
             // 可以选择在这里设置一个错误状态，但playerStore可能没有error字段
           });
@@ -143,22 +148,26 @@ const usePlayerStore = create<PlayerState>((set, get) => ({
         }
         return;
       }
-      
+
       // 使用DetailStore找到的实际source来获取episodes，而不是原始的preferredSource
-      logger.info(`[INFO] Using actual source "${detail.source}" instead of preferred source "${source}"`);  
+      logger.info(`[INFO] Using actual source "${detail.source}" instead of preferred source "${source}"`);
       episodes = episodesSelectorBySource(detail.source)(useDetailStore.getState());
-      
+
       if (!episodes || episodes.length === 0) {
         logger.error(`[ERROR] No episodes found for "${title}" from source "${detail.source}" (${detail.source_name})`);
-        
+
         // 尝试从searchResults中直接获取episodes
         const detailStoreState = useDetailStore.getState();
-        logger.info(`[INFO] Available sources in searchResults: ${detailStoreState.searchResults.map(r => `${r.source}(${r.episodes?.length || 0} episodes)`).join(', ')}`);
-        
+        logger.info(
+          `[INFO] Available sources in searchResults: ${detailStoreState.searchResults.map((r) => `${r.source}(${r.episodes?.length || 0} episodes)`).join(", ")}`,
+        );
+
         // 如果当前source没有episodes，尝试使用第一个有episodes的source
-        const sourceWithEpisodes = detailStoreState.searchResults.find(r => r.episodes && r.episodes.length > 0);
+        const sourceWithEpisodes = detailStoreState.searchResults.find((r) => r.episodes && r.episodes.length > 0);
         if (sourceWithEpisodes) {
-          logger.info(`[FALLBACK] Using alternative source "${sourceWithEpisodes.source}" with ${sourceWithEpisodes.episodes.length} episodes`);
+          logger.info(
+            `[FALLBACK] Using alternative source "${sourceWithEpisodes.source}" with ${sourceWithEpisodes.episodes.length} episodes`,
+          );
           episodes = sourceWithEpisodes.episodes;
           // 更新detail为有episodes的source
           detail = sourceWithEpisodes;
@@ -168,17 +177,20 @@ const usePlayerStore = create<PlayerState>((set, get) => ({
           return;
         }
       }
-      
+
       logger.info(`[SUCCESS] Detail and episodes loaded - source: ${detail.source_name}, episodes: ${episodes.length}`);
     } else {
-      
       // 即使是缓存的数据，也要确保使用正确的source获取episodes
       if (detail && detail.source && detail.source !== source) {
-        logger.info(`[INFO] Cached detail source "${detail.source}" differs from provided source "${source}", updating episodes`);
+        logger.info(
+          `[INFO] Cached detail source "${detail.source}" differs from provided source "${source}", updating episodes`,
+        );
         episodes = episodesSelectorBySource(detail.source)(useDetailStore.getState());
-        
+
         if (!episodes || episodes.length === 0) {
-          logger.warn(`[WARN] Cached detail source "${detail.source}" has no episodes, trying provided source "${source}"`);
+          logger.warn(
+            `[WARN] Cached detail source "${detail.source}" has no episodes, trying provided source "${source}"`,
+          );
           episodes = episodesSelectorBySource(source)(useDetailStore.getState());
         }
       }
@@ -190,29 +202,30 @@ const usePlayerStore = create<PlayerState>((set, get) => ({
       set({ isLoading: false });
       return;
     }
-    
+
     if (!episodes || episodes.length === 0) {
-      logger.error(`[ERROR] Final check failed: no episodes available for source "${detail.source}" (${detail.source_name})`);
+      logger.error(
+        `[ERROR] Final check failed: no episodes available for source "${detail.source}" (${detail.source_name})`,
+      );
       set({ isLoading: false });
       return;
     }
-    
+
     logger.info(`[SUCCESS] Final validation passed - detail: ${detail.source_name}, episodes: ${episodes.length}`);
 
     try {
-      
       const playRecord = await PlayRecordManager.get(detail!.source, detail!.id.toString());
-      
+
       const playerSettings = await PlayerSettingsManager.get(detail!.source, detail!.id.toString());
-      
+
       const initialPositionFromRecord = playRecord?.play_time ? playRecord.play_time * 1000 : 0;
       const savedPlaybackRate = playerSettings?.playbackRate || 1.0;
-      
+
       const mappedEpisodes = episodes.map((ep, index) => ({
         url: toPlayUrl(ep),
         title: `第 ${index + 1} 集`,
       }));
-      
+
       set({
         isLoading: false,
         currentEpisodeIndex: episodeIndex,
@@ -222,11 +235,9 @@ const usePlayerStore = create<PlayerState>((set, get) => ({
         introEndTime: playRecord?.introEndTime || playerSettings?.introEndTime,
         outroStartTime: playRecord?.outroStartTime || playerSettings?.outroStartTime,
       });
-
     } catch (error) {
       logger.debug("Failed to load play record", error);
       set({ isLoading: false });
-      
     }
   },
 
@@ -430,11 +441,11 @@ const usePlayerStore = create<PlayerState>((set, get) => ({
   setPlaybackRate: async (rate) => {
     const { videoRef } = get();
     const detail = useDetailStore.getState().detail;
-    
+
     try {
       await videoRef?.current?.setRateAsync(rate, true);
       set({ playbackRate: rate });
-      
+
       // Save the playback rate preference
       if (detail) {
         await PlayerSettingsManager.save(detail.source, detail.id.toString(), { playbackRate: rate });
@@ -469,7 +480,7 @@ const usePlayerStore = create<PlayerState>((set, get) => ({
     set({ loadFailed: false, isLoading: true, reloadNonce: get().reloadNonce + 1 });
   },
 
-  handleVideoError: async (errorType: 'ssl' | 'network' | 'other', failedUrl: string) => {
+  handleVideoError: async (errorType: "ssl" | "network" | "other", failedUrl: string) => {
     logger.error(`[VIDEO_ERROR] Handling ${errorType} error for URL: ${failedUrl}`);
     // 代理链路失败自愈：失败的是代理 URL 时，先用原始地址原地重试一次（避免代理故障导致所有源"不可用"）
     const originalPlayUrl = unwrapVodProxyUrl(failedUrl);
@@ -479,49 +490,47 @@ const usePlayerStore = create<PlayerState>((set, get) => ({
         logger.warn("[VIDEO_ERROR] Proxied URL failed, retrying original URL");
         set({
           isLoading: false,
-          episodes: currentEps.map((e, i) =>
-            i === curIdx ? { ...e, url: originalPlayUrl } : e
-          ),
+          episodes: currentEps.map((e, i) => (i === curIdx ? { ...e, url: originalPlayUrl } : e)),
         });
         return;
       }
     }
-    
+
     const detailStoreState = useDetailStore.getState();
     const { detail } = detailStoreState;
     const { currentEpisodeIndex } = get();
-    
+
     if (!detail) {
       logger.error(`[VIDEO_ERROR] Cannot fallback - no detail available`);
       set({ isLoading: false });
       return;
     }
-    
+
     // 标记当前source为失败
     const currentSource = detail.source;
     const errorReason = `${errorType} error: ${failedUrl.substring(0, 100)}...`;
     useDetailStore.getState().markSourceAsFailed(currentSource, errorReason);
-    
+
     // 获取下一个可用的source
     const fallbackSource = useDetailStore.getState().getNextAvailableSource(currentSource, currentEpisodeIndex);
-    
+
     if (!fallbackSource) {
       logger.error(`[VIDEO_ERROR] No fallback sources available for episode ${currentEpisodeIndex + 1}`);
-      Toast.show({ 
-        type: "error", 
-        text1: "播放失败", 
-        text2: "所有播放源都不可用，请稍后重试" 
+      Toast.show({
+        type: "error",
+        text1: "播放失败",
+        text2: "所有播放源都不可用，请稍后重试",
       });
       set({ isLoading: false, loadFailed: true });
       return;
     }
-    
+
     logger.info(`[VIDEO_ERROR] Switching to fallback source: ${fallbackSource.source} (${fallbackSource.source_name})`);
-    
+
     try {
       // 更新DetailStore的当前detail为fallback source
       await useDetailStore.getState().setDetail(fallbackSource);
-      
+
       // 重新加载当前集数的episodes
       const newEpisodes = fallbackSource.episodes || [];
       if (newEpisodes.length > currentEpisodeIndex) {
@@ -529,18 +538,18 @@ const usePlayerStore = create<PlayerState>((set, get) => ({
           url: toPlayUrl(ep),
           title: `第 ${index + 1} 集`,
         }));
-        
+
         set({
           episodes: mappedEpisodes,
           isLoading: false, // 让Video组件重新渲染
         });
-        
+
         logger.info(`[VIDEO_ERROR] New episode URL: ${newEpisodes[currentEpisodeIndex].substring(0, 100)}...`);
-        
-        Toast.show({ 
-          type: "success", 
-          text1: "已切换播放源", 
-          text2: `正在使用 ${fallbackSource.source_name}` 
+
+        Toast.show({
+          type: "success",
+          text1: "已切换播放源",
+          text2: `正在使用 ${fallbackSource.source_name}`,
         });
       } else {
         logger.error(`[VIDEO_ERROR] Fallback source doesn't have episode ${currentEpisodeIndex + 1}`);

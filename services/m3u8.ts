@@ -1,4 +1,5 @@
-import { api } from '@/services/api';
+import { api } from "@/services/api";
+import { setVodPath } from "@/services/vodPath";
 
 interface CacheEntry {
   resolution: string | null;
@@ -32,15 +33,20 @@ const absolute = (base: string, rel: string): string => {
  * 探测一个源：播放列表首字节耗时 + 清晰度 + 首分片实测速度（range 128KB）。
  * 用「播放时会真正请求的地址」（含点播代理改写）来测，得到的速度更有参考价值。
  */
-export const probeStream = async (url: string, signal?: AbortSignal): Promise<StreamProbe> => {
+export const probeStream = async (
+  url: string,
+  signal?: AbortSignal,
+  path: "auto" | "direct" | "proxy" = "auto",
+): Promise<StreamProbe> => {
   const empty: StreamProbe = { resolution: null, speedKb: 0, ttfbMs: 0 };
   if (!url || !url.toLowerCase().includes(".m3u8")) return empty;
-  const cached = probeCache[url];
+  const cacheKey = `${path}|${url}`;
+  const cached = probeCache[cacheKey];
   if (cached && Date.now() - cached.timestamp < CACHE_DURATION) return cached.probe;
 
   let probeUrl = url;
   try {
-    probeUrl = api.getVodProxyUrl(url) || url;
+    probeUrl = path === "direct" ? url : api.getVodProxyUrl(url) || url;
   } catch {
     probeUrl = url;
   }
@@ -83,9 +89,7 @@ export const probeStream = async (url: string, signal?: AbortSignal): Promise<St
       }
     } else {
       // 直接是媒体列表
-      const segs = lines
-        .map((l) => l.trim())
-        .filter((l) => l && !l.startsWith("#"));
+      const segs = lines.map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
       if (segs.length) {
         const segUrl = absolute(probeUrl, segs[0]);
         probe.speedKb = await measureSpeed(segUrl, signal);
@@ -94,7 +98,7 @@ export const probeStream = async (url: string, signal?: AbortSignal): Promise<St
   } catch {
     /* 探测失败按空值处理 */
   }
-  probeCache[url] = { probe, timestamp: Date.now() };
+  probeCache[cacheKey] = { probe, timestamp: Date.now() };
   return probe;
 };
 
@@ -113,11 +117,7 @@ const measureSpeed = async (segUrl: string, signal?: AbortSignal): Promise<numbe
   }
 };
 
-export const getResolutionFromM3U8 = async (
-  url: string,
-  signal?: AbortSignal
-): Promise<string | null> => {
-  
+export const getResolutionFromM3U8 = async (url: string, signal?: AbortSignal): Promise<string | null> => {
   // 1. Check cache first
   const cachedEntry = resolutionCache[url];
   if (cachedEntry && Date.now() - cachedEntry.timestamp < CACHE_DURATION) {
@@ -137,11 +137,11 @@ export const getResolutionFromM3U8 = async (
       probeUrl = url;
     }
     const response = await fetch(probeUrl, { signal });
-    
+
     if (!response.ok) {
       return null;
     }
-    
+
     const playlist = await response.text();
     const lines = playlist.split("\n");
     let highestResolution = 0;
@@ -170,4 +170,30 @@ export const getResolutionFromM3U8 = async (
   } catch {
     return null;
   }
+};
+
+/** 双链路实测：直连 vs 代理，返回两者数据与结论（仅当配置了代理才有意义） */
+export const measureVodPaths = async (
+  url: string,
+  source: string,
+  signal?: AbortSignal,
+): Promise<{ direct: StreamProbe; proxy: StreamProbe | null; chosen: "direct" | "proxy" }> => {
+  const direct = await probeStream(url, signal, "direct");
+  const hasProxy = (() => {
+    try {
+      return (api.getVodProxyUrl(url) || "") !== url;
+    } catch {
+      return false;
+    }
+  })();
+  if (!hasProxy) {
+    return { direct, proxy: null, chosen: "direct" };
+  }
+  const proxy = await probeStream(url, signal, "proxy");
+  const d = direct.speedKb || 0;
+  const p = proxy.speedKb || 0;
+  // 直连只要不慢于代理的 85% 就用直连（少一跳、省服务器带宽）
+  const chosen: "direct" | "proxy" = d > 0 && d >= p * 0.85 ? "direct" : "proxy";
+  setVodPath(source, chosen).catch(() => undefined);
+  return { direct, proxy, chosen };
 };

@@ -3,7 +3,7 @@ import { View, TextInput, StyleSheet, Alert, Keyboard, TouchableOpacity } from "
 import { ThemedView } from "@/components/ThemedView";
 import { ThemedText } from "@/components/ThemedText";
 import VideoCard from "@/components/VideoCard";
-import VideoLoadingAnimation from "@/components/VideoLoadingAnimation";
+import { PosterGridSkeleton } from "@/components/LoadingSkeleton";
 import { api, SearchResult } from "@/services/api";
 import { Search, QrCode } from "lucide-react-native";
 import { StyledButton } from "@/components/StyledButton";
@@ -19,9 +19,9 @@ import ResponsiveNavigation from "@/components/navigation/ResponsiveNavigation";
 import ResponsiveHeader from "@/components/navigation/ResponsiveHeader";
 import { DeviceUtils } from "@/utils/DeviceUtils";
 import { useBackToHome } from "@/hooks/useBackToHome";
-import Logger from '@/utils/Logger';
+import Logger from "@/utils/Logger";
 
-const logger = Logger.withTag('SearchScreen');
+const logger = Logger.withTag("SearchScreen");
 
 export default function SearchScreen() {
   const [keyword, setKeyword] = useState("");
@@ -43,7 +43,7 @@ export default function SearchScreen() {
   const { deviceType, spacing } = responsiveConfig;
 
   useEffect(() => {
-    if (lastMessage && targetPage === 'search') {
+    if (lastMessage && targetPage === "search") {
       logger.debug("Received remote input:", lastMessage);
       const realMessage = lastMessage.split("_")[0];
       setKeyword(realMessage);
@@ -87,7 +87,7 @@ export default function SearchScreen() {
       ]);
       return;
     }
-    showRemoteModal('search');
+    showRemoteModal("search");
   };
 
   const renderItem = ({ item }: { item: SearchResult; index: number }) => (
@@ -132,17 +132,17 @@ export default function SearchScreen() {
           />
         </TouchableOpacity>
         <StyledButton style={dynamicStyles.searchButton} onPress={onSearchPress}>
-          <Search size={deviceType === 'mobile' ? 20 : 24} color="white" />
+          <Search size={deviceType === "mobile" ? 20 : 24} color="white" />
         </StyledButton>
-        {deviceType !== 'mobile' && (
+        {deviceType !== "mobile" && (
           <StyledButton style={dynamicStyles.qrButton} onPress={handleQrPress}>
-            <QrCode size={deviceType === 'tv' ? 24 : 20} color="white" />
+            <QrCode size={deviceType === "tv" ? 24 : 20} color="white" />
           </StyledButton>
         )}
       </View>
 
       {loading ? (
-        <VideoLoadingAnimation showProgressBar={false} />
+        <PosterGridSkeleton count={deviceType === "tv" ? 18 : 12} />
       ) : error ? (
         <View style={[commonStyles.center, { flex: 1 }]}>
           <ThemedText style={dynamicStyles.errorText}>{error}</ThemedText>
@@ -161,13 +161,11 @@ export default function SearchScreen() {
   );
 
   const content = (
-    <ThemedView style={[commonStyles.container, dynamicStyles.container]}>
-      {renderSearchContent()}
-    </ThemedView>
+    <ThemedView style={[commonStyles.container, dynamicStyles.container]}>{renderSearchContent()}</ThemedView>
   );
 
   // 根据设备类型决定是否包装在响应式导航中
-  if (deviceType === 'tv') {
+  if (deviceType === "tv") {
     return content;
   }
 
@@ -180,13 +178,13 @@ export default function SearchScreen() {
 }
 
 const createResponsiveStyles = (deviceType: string, spacing: number) => {
-  const isMobile = deviceType === 'mobile';
+  const isMobile = deviceType === "mobile";
   const minTouchTarget = DeviceUtils.getMinTouchTargetSize();
 
   return StyleSheet.create({
     container: {
       flex: 1,
-      paddingTop: deviceType === 'tv' ? 50 : 0,
+      paddingTop: deviceType === "tv" ? 50 : 0,
     },
     searchContainer: {
       flexDirection: "row",
@@ -217,7 +215,7 @@ const createResponsiveStyles = (deviceType: string, spacing: number) => {
       justifyContent: "center",
       alignItems: "center",
       borderRadius: isMobile ? 8 : 8,
-      marginRight: deviceType !== 'mobile' ? spacing / 2 : 0,
+      marginRight: deviceType !== "mobile" ? spacing / 2 : 0,
     },
     qrButton: {
       width: isMobile ? minTouchTarget : 50,
