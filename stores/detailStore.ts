@@ -1,18 +1,27 @@
 import { create } from "zustand";
 import { SearchResult, api } from "@/services/api";
-import { getResolutionFromM3U8 } from "@/services/m3u8";
+import { probeStream } from "@/services/m3u8";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { FavoriteManager } from "@/services/storage";
 import Logger from "@/utils/Logger";
 
 const logger = Logger.withTag('DetailStore');
 
-export type SearchResultWithResolution = SearchResult & { resolution?: string | null };
+export type SearchResultWithResolution = SearchResult & {
+  resolution?: string | null;
+  /** 首分片实测速度 KB/s（0 = 未测到） */
+  speedKb?: number;
+};
 
 interface DetailState {
   q: string | null;
   searchResults: SearchResultWithResolution[];
-  sources: { source: string; source_name: string; resolution: string | null | undefined }[];
+  sources: {
+    source: string;
+    source_name: string;
+    resolution: string | null | undefined;
+    speedKb?: number;
+  }[];
   detail: SearchResultWithResolution | null;
   loading: boolean;
   error: string | null;
@@ -69,22 +78,30 @@ const useDetailStore = create<DetailState>((set, get) => ({
       const m = r.match(/(\d{3,4})p/i);
       return m ? parseInt(m[1], 10) : 0;
     };
+    // 排序：先清晰度，再实测速度（同清晰度时快的在前）
+    const rankOf = (r: { resolution?: string | null; speedKb?: number }) => [
+      resRank(r.resolution),
+      r.speedKb ?? 0,
+    ];
 
     const processAndSetResults = async (results: SearchResult[], merge = false) => {
       
       const resultsWithResolution = await Promise.all(
         results.map(async (searchResult) => {
-          let resolution;
+          let resolution: string | null = null;
+          let speedKb = 0;
           try {
             if (searchResult.episodes && searchResult.episodes.length > 0) {
-              resolution = await getResolutionFromM3U8(searchResult.episodes[0], signal);
+              const probe = await probeStream(searchResult.episodes[0], signal);
+              resolution = probe.resolution;
+              speedKb = probe.speedKb;
             }
           } catch (e) {
             if ((e as Error).name !== "AbortError") {
-              logger.info(`Failed to get resolution for ${searchResult.source_name}`, e);
+              logger.info(`Failed to probe ${searchResult.source_name}`, e);
             }
           }
-          return { ...searchResult, resolution };
+          return { ...searchResult, resolution, speedKb };
         })
       );
 
@@ -96,7 +113,11 @@ const useDetailStore = create<DetailState>((set, get) => ({
         // 按清晰度排序（稳定）：高分辨率源在前，默认播放优先更清晰
         const finalResults = (merge ? [...state.searchResults, ...newResults] : resultsWithResolution)
           .slice()
-          .sort((a, b) => resRank(b.resolution) - resRank(a.resolution));
+          .sort((a, b) => {
+            const [ar, as_] = rankOf(a);
+            const [br, bs] = rankOf(b);
+            return br - ar || bs - as_;
+          });
 
         return {
           searchResults: finalResults,
@@ -104,6 +125,7 @@ const useDetailStore = create<DetailState>((set, get) => ({
             source: r.source,
             source_name: r.source_name,
             resolution: r.resolution,
+            speedKb: r.speedKb ?? 0,
           })),
           detail: state.detail ?? finalResults[0] ?? null,
         };
