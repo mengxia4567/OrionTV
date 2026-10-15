@@ -91,11 +91,45 @@ const useDetailStore = create<DetailState>((set, get) => ({
     // 排序：先清晰度，再实测速度（同清晰度时快的在前）
     const rankOf = (r: { resolution?: string | null; speedKb?: number }) => [resRank(r.resolution), r.speedKb ?? 0];
 
+    /** 把一批结果并入 store（含排序）：测速结果只是「附加信息」，不影响先出结果 */
+    const applyResults = (
+      state: { searchResults: SearchResultWithResolution[]; detail: SearchResultWithResolution | null },
+      incoming: SearchResultWithResolution[],
+      merge: boolean,
+    ) => {
+      const existing = new Set(state.searchResults.map((r) => r.source));
+      const fresh = incoming.filter((r) => !existing.has(r.source));
+      const list = (merge ? [...state.searchResults, ...fresh] : incoming).slice().sort((a, b) => {
+        const [ar, as_] = rankOf(a);
+        const [br, bs] = rankOf(b);
+        return br - ar || bs - as_;
+      });
+      return {
+        searchResults: list,
+        sources: list.map((r) => ({
+          source: r.source,
+          source_name: r.source_name,
+          resolution: r.resolution,
+          speedKb: r.speedKb ?? 0,
+          speedDirect: r.speedDirect,
+          speedProxy: r.speedProxy,
+          path: r.path,
+        })),
+      };
+    };
+
     const processAndSetResults = async (results: SearchResult[], merge = false) => {
-      // 前 N 个源做「直连 vs 代理」双链路实测（谁快用谁，并按源记住）；
-      // 其余源只测默认链路，避免一次搜索发太多请求。
+      // 1) 先把结果放出来（不等测速）——搜索体验优先：列表立刻可见、可点播，
+      //    清晰度与速度随后补上（几十个源逐个测速要好几秒，之前会一直卡在加载页）。
+      set((state) => ({
+        ...applyResults(state, results as SearchResultWithResolution[], merge),
+        detail: state.detail ?? (results[0] as SearchResultWithResolution) ?? null,
+      }));
+
+      // 2) 后台测速：前 N 个源做「直连 vs 代理」双链路实测（谁快用谁，并按源记住），
+      //    其余源只测默认链路，避免一次搜索发太多请求。
       const DUAL_PROBE_LIMIT = 8;
-      const resultsWithResolution = await Promise.all(
+      const enriched = await Promise.all(
         results.map(async (searchResult, idx) => {
           let resolution: string | null = null;
           let speedKb = 0;
@@ -128,31 +162,15 @@ const useDetailStore = create<DetailState>((set, get) => ({
 
       if (signal.aborted) return;
 
+      // 3) 把测速结果合并回去（按 source 覆盖对应行），并重排一次
       set((state) => {
-        const existingSources = new Set(state.searchResults.map((r) => r.source));
-        const newResults = resultsWithResolution.filter((r) => !existingSources.has(r.source));
-        // 按清晰度排序（稳定）：高分辨率源在前，默认播放优先更清晰
-        const finalResults = (merge ? [...state.searchResults, ...newResults] : resultsWithResolution)
-          .slice()
-          .sort((a, b) => {
-            const [ar, as_] = rankOf(a);
-            const [br, bs] = rankOf(b);
-            return br - ar || bs - as_;
-          });
-
-        return {
-          searchResults: finalResults,
-          sources: finalResults.map((r) => ({
-            source: r.source,
-            source_name: r.source_name,
-            resolution: r.resolution,
-            speedKb: r.speedKb ?? 0,
-            speedDirect: r.speedDirect,
-            speedProxy: r.speedProxy,
-            path: r.path,
-          })),
-          detail: state.detail ?? finalResults[0] ?? null,
-        };
+        const bySource = new Map(enriched.map((r) => [r.source, r]));
+        const merged = state.searchResults.map((r) => bySource.get(r.source) ?? r);
+        // 本轮新增但 store 里还没有的（极端情况）也补上
+        for (const r of enriched) {
+          if (!merged.some((x) => x.source === r.source)) merged.push(r);
+        }
+        return applyResults({ ...state, searchResults: merged }, merged, false);
       });
     };
 
