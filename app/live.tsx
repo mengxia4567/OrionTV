@@ -17,6 +17,7 @@ import LivePlayer, { LivePlayerHandle } from "@/components/LivePlayer";
 import LiveTouchControls from "@/components/LiveTouchControls";
 import { useMusicStore } from "@/stores/musicStore";
 import { getPlayableUrl } from "@/services/m3u";
+import { getLivePathSync, liveOriginOf, primeLivePathPrefs, setLivePath } from "@/services/livePath";
 import { fetchAndParseM3u } from "@/services/m3uFetch";
 import { groupLiveChannels, ChannelEntry } from "@/services/liveChannels";
 import { ThemedView } from "@/components/ThemedView";
@@ -116,7 +117,15 @@ export default function LiveScreen() {
   }, [previewPlayUrl]);
   const currentSources = currentEntry?.sources || [];
   const currentSource = currentSources[currentSourceIndex] || null;
-  const selectedChannelUrl = currentSource ? getPlayableUrl(currentSource.url) : null;
+  const [livePath, setLivePathState] = useState<"relay" | "direct">("relay");
+  // 该源能否直连（带 ua/ref 的官方源发不出这些头，只能走中继）
+  const liveOriginInfo = liveOriginOf(currentSource?.url ?? null);
+  const liveDirectUrl = liveOriginInfo.needsHeaders ? null : liveOriginInfo.origin;
+  const selectedChannelUrl = currentSource
+    ? livePath === "direct" && liveDirectUrl
+      ? liveDirectUrl
+      : getPlayableUrl(currentSource.url)
+    : null;
 
   // 直播与音乐互斥：只在本页聚焦、且音乐未在播放时才允许直播出声；
   // 进入本页时若音乐正在播则主动暂停音乐（刚点的直播优先出声，避免两个音源叠加）
@@ -132,6 +141,16 @@ export default function LiveScreen() {
     }, []),
   );
   const liveShouldPlay = isFocused && !musicIsPlaying;
+
+  useEffect(() => {
+    primeLivePathPrefs().catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    const ch = currentEntry?.name ?? "";
+    if (!ch) return;
+    setLivePathState(getLivePathSync(ch));
+  }, [currentEntry?.name]);
 
   // 通知栏 / 锁屏媒体卡片（手机、平板）：直播没有进度，上一台/下一台对应切台
   const [livePlaying, setLivePlaying] = useState(false);
@@ -212,14 +231,20 @@ export default function LiveScreen() {
         setLiveFailed(false);
         setCurrentSourceIndex(tried + 1);
         showChannelTitle(`${currentEntry.name} · 备用源 ${tried + 1}`);
-      } else if (tried < currentSources.length) {
+      } else if (livePath !== "direct" && liveDirectUrl) {
+        // 中继这条路都不行时，试一次直连源站（只对不要求 UA/Referer 的源）
+        autoHealRef.current.tried = tried + 1;
+        setLiveFailed(false);
+        setLivePath(currentEntry.name, "direct").catch(() => undefined);
+        setLivePathState("direct");
+      } else if (tried < currentSources.length + 1) {
         autoHealRef.current.tried = tried + 1;
         setLiveFailed(false);
         playerRef.current?.retry();
       }
     }, 1200);
     return () => clearTimeout(timer);
-  }, [liveFailed, currentEntry, currentSources.length]);
+  }, [liveFailed, currentEntry, currentSources.length, livePath, liveDirectUrl]);
 
   /** 切换当前频道的播放源（0 = 主源，>0 = 备源） */
   const handleSelectSource = (index: number) => {

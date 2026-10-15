@@ -7,6 +7,7 @@ import { StyledButton } from "@/components/StyledButton";
 import { DetailSkeleton } from "@/components/LoadingSkeleton";
 import useDetailStore from "@/stores/detailStore";
 import { primeVodPathPrefs } from "@/services/vodPath";
+import { sourceMetaText } from "@/utils/vodSpeed";
 import { FontAwesome } from "@expo/vector-icons";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { getCommonResponsiveStyles } from "@/utils/ResponsiveStyles";
@@ -47,20 +48,7 @@ export default function DetailScreen() {
     };
   }, [abort, init, q, source, id]);
 
-  /** 速度显示：KB/s → 人类可读 */
-  const formatSpeed = (kb?: number) => {
-    if (!kb || kb <= 0) return "速度未知";
-    return kb >= 1024 ? `${(kb / 1024).toFixed(1)} MB/s` : `${Math.round(kb)} KB/s`;
-  };
-  /** 两条链路对比文案：直连 / 代理 谁快用谁（App 实测并记住） */
-  const pathText = (item: { speedDirect?: number; speedProxy?: number; path?: "direct" | "proxy" }) => {
-    const parts: string[] = [];
-    if (item.speedDirect) parts.push(`直连 ${formatSpeed(item.speedDirect)}`);
-    if (item.speedProxy) parts.push(`代理 ${formatSpeed(item.speedProxy)}`);
-    if (!parts.length) return "速度未知";
-    const used = item.path === "direct" ? "直连" : item.path === "proxy" ? "代理" : "";
-    return parts.join(" · ") + (used ? ` · 用${used}` : "");
-  };
+  /** 速度与链路文案统一在 utils/vodSpeed.ts（播放页换源弹窗也用同一套） */
 
   const handlePlay = (episodeIndex: number) => {
     if (!detail) return;
@@ -159,8 +147,7 @@ export default function DetailScreen() {
                       {item.source_name}
                     </ThemedText>
                     <ThemedText style={dynamicStyles.srcMeta}>
-                      {item.resolution || "清晰度未知"} · {pathText(item)}
-                      {item.episodes.length > 1 ? ` · ${item.episodes.length} 集` : ""}
+                      {sourceMetaText(item.resolution, item, item.episodes.length)}
                     </ThemedText>
                   </View>
                 </StyledButton>
@@ -222,8 +209,7 @@ export default function DetailScreen() {
                   {detail.source_name}
                 </ThemedText>
                 <ThemedText style={dynamicStyles.sourcePickerMeta}>
-                  {detail.resolution || "清晰度未知"} · {pathText(detail)}
-                  {detail.episodes.length > 1 ? ` · ${detail.episodes.length} 集` : ""}
+                  {sourceMetaText(detail.resolution, detail, detail.episodes.length)}
                 </ThemedText>
                 <ThemedText style={dynamicStyles.sourcePickerAction}>更换（{searchResults.length} 个源）▾</ThemedText>
               </View>
@@ -294,8 +280,7 @@ export default function DetailScreen() {
                     {detail.source_name}
                   </ThemedText>
                   <ThemedText style={dynamicStyles.sourcePickerMeta}>
-                    {detail.resolution || "清晰度未知"} · {formatSpeed(detail.speedKb)}
-                    {detail.episodes.length > 1 ? ` · ${detail.episodes.length} 集` : ""}
+                    {sourceMetaText(detail.resolution, detail, detail.episodes.length)}
                   </ThemedText>
                   <ThemedText style={dynamicStyles.sourcePickerAction}>更换（{searchResults.length} 个源）▾</ThemedText>
                 </View>

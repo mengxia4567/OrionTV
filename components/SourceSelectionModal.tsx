@@ -3,9 +3,10 @@ import { View, Text, StyleSheet, Modal, FlatList } from "react-native";
 import { StyledButton } from "./StyledButton";
 import useDetailStore from "@/stores/detailStore";
 import usePlayerStore from "@/stores/playerStore";
-import Logger from '@/utils/Logger';
+import { sourceMetaText } from "@/utils/vodSpeed";
+import Logger from "@/utils/Logger";
 
-const logger = Logger.withTag('SourceSelectionModal');
+const logger = Logger.withTag("SourceSelectionModal");
 
 export const SourceSelectionModal: React.FC = () => {
   const { showSourceModal, setShowSourceModal, loadVideo, currentEpisodeIndex, status } = usePlayerStore();
@@ -16,7 +17,7 @@ export const SourceSelectionModal: React.FC = () => {
     if (searchResults[index].source !== detail?.source) {
       const newDetail = searchResults[index];
       setDetail(newDetail);
-      
+
       // Reload the video with the new source, preserving current position
       const currentPosition = status?.isLoaded ? status.positionMillis : undefined;
       loadVideo({
@@ -24,7 +25,7 @@ export const SourceSelectionModal: React.FC = () => {
         id: newDetail.id.toString(),
         episodeIndex: currentEpisodeIndex,
         title: newDetail.title,
-        position: currentPosition
+        position: currentPosition,
       });
     }
     setShowSourceModal(false);
@@ -38,21 +39,25 @@ export const SourceSelectionModal: React.FC = () => {
     <Modal visible={showSourceModal} transparent={true} animationType="slide" onRequestClose={onClose}>
       <View style={styles.modalContainer}>
         <View style={styles.modalContent}>
-          <Text style={styles.modalTitle}>选择播放源</Text>
+          <Text style={styles.modalTitle}>选择播放源（按清晰度 / 速度排序）</Text>
           <FlatList
             data={searchResults}
-            numColumns={3}
             contentContainerStyle={styles.sourceList}
             keyExtractor={(item, index) => `source-${item.source}-${index}`}
             renderItem={({ item, index }) => (
               <StyledButton
-                text={item.source_name}
                 onPress={() => onSelectSource(index)}
                 isSelected={detail?.source === item.source}
                 hasTVPreferredFocus={detail?.source === item.source}
                 style={styles.sourceItem}
-                textStyle={styles.sourceItemText}
-              />
+              >
+                <View style={styles.sourceItemInner}>
+                  <Text style={styles.sourceName} numberOfLines={1}>
+                    {item.source_name}
+                  </Text>
+                  <Text style={styles.sourceMeta}>{sourceMetaText(item.resolution, item, item.episodes?.length)}</Text>
+                </View>
+              </StyledButton>
             )}
           />
         </View>
@@ -69,7 +74,7 @@ const styles = StyleSheet.create({
     backgroundColor: "transparent",
   },
   modalContent: {
-    width: 600,
+    width: 620,
     height: "100%",
     backgroundColor: "rgba(0, 0, 0, 0.85)",
     padding: 20,
@@ -85,13 +90,24 @@ const styles = StyleSheet.create({
     justifyContent: "flex-start",
   },
   sourceItem: {
-    paddingVertical: 2,
-    margin: 4,
+    marginVertical: 4,
     marginLeft: 10,
     marginRight: 8,
-    width: "30%",
+    borderRadius: 8,
+    justifyContent: "flex-start",
   },
-  sourceItemText: {
-    fontSize: 14,
+  sourceItemInner: {
+    flexDirection: "column",
+    alignItems: "flex-start",
+  },
+  sourceName: {
+    color: "white",
+    fontSize: 15,
+    fontWeight: "500",
+  },
+  sourceMeta: {
+    color: "#aaa",
+    fontSize: 13,
+    marginTop: 2,
   },
 });
