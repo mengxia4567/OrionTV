@@ -68,6 +68,8 @@ export default function LiveScreen() {
   const [channelTitle, setChannelTitle] = useState<string | null>(null);
   const titleTimer = useRef<NodeJS.Timeout | null>(null);
   const playerRef = useRef<LivePlayerHandle>(null);
+  /** 播放失败后的自动处置：先切备用源，再兜底原地重试一次（避免用户手动点「重试」） */
+  const autoHealRef = useRef<{ key: string; tried: number }>({ key: "", tried: 0 });
   // 手机/平板：应用内沉浸式全屏（锁方向 + 隐藏系统栏 + 隐藏页头/底栏）；TV 沿用原生全屏
   const fullscreen = useImmersiveFullscreen();
   const resizeMode = useVideoFit(fullscreen.naturalSize, fullscreen.isFullscreen);
@@ -188,12 +190,40 @@ export default function LiveScreen() {
   const handleSelectChannel = (entry: ChannelEntry, index: number) => {
     setCurrentChannelIndex(index);
     setCurrentSourceIndex(0);
+    autoHealRef.current = { key: entry.name, tried: 0 };
+    setLiveFailed(false);
     showChannelTitle(entry.name);
     setIsChannelListVisible(false);
   };
 
+  /**
+   * 播放失败自动处置：同一频道先依次切备用源，备用源都试完再原地重试一次。
+   * 主源失效/变慢（源站时快时慢）时用户不必再手动点「重试」。
+   */
+  useEffect(() => {
+    if (!liveFailed || !currentEntry) return;
+    if (autoHealRef.current.key !== currentEntry.name) {
+      autoHealRef.current = { key: currentEntry.name, tried: 0 };
+    }
+    const timer = setTimeout(() => {
+      const tried = autoHealRef.current.tried;
+      if (tried < currentSources.length - 1) {
+        autoHealRef.current.tried = tried + 1;
+        setLiveFailed(false);
+        setCurrentSourceIndex(tried + 1);
+        showChannelTitle(`${currentEntry.name} · 备用源 ${tried + 1}`);
+      } else if (tried < currentSources.length) {
+        autoHealRef.current.tried = tried + 1;
+        setLiveFailed(false);
+        playerRef.current?.retry();
+      }
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [liveFailed, currentEntry, currentSources.length]);
+
   /** 切换当前频道的播放源（0 = 主源，>0 = 备源） */
   const handleSelectSource = (index: number) => {
+    autoHealRef.current = { key: currentEntry?.name ?? "", tried: index };
     setCurrentSourceIndex(index);
     const src = currentSources[index];
     if (src) {

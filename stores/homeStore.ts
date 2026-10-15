@@ -312,6 +312,9 @@ const useHomeStore = create<HomeState>((set, get) => ({
 
   refreshPlayRecords: async () => {
     const { apiBaseUrl } = useSettingsStore.getState();
+    // 冷启动时设置可能尚未从存储读出：此轮不做判断，避免把「最近播放」分类误删
+    // （取自 OrionTV 上游 1.3.14 的同名保护）
+    if (!apiBaseUrl) return;
     await useAuthStore.getState().checkLoginStatus(apiBaseUrl);
     const { isLoggedIn } = useAuthStore.getState();
     if (!isLoggedIn) {
