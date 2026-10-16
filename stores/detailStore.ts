@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { SearchResult, api } from "@/services/api";
 import { probeStream, measureVodPaths } from "@/services/m3u8";
 import { primeVodPathPrefs } from "@/services/vodPath";
+import { getSourcePrefsSync, primeSourcePrefs } from "@/services/sourcePrefs";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { FavoriteManager } from "@/services/storage";
 import Logger from "@/utils/Logger";
@@ -81,6 +82,7 @@ const useDetailStore = create<DetailState>((set, get) => ({
 
     const { videoSource } = useSettingsStore.getState();
     primeVodPathPrefs().catch(() => undefined);
+    primeSourcePrefs().catch(() => undefined);
 
     // 分辨率排序权重：数值越大越清晰；未知排最后
     const resRank = (r?: string | null): number => {
@@ -99,13 +101,18 @@ const useDetailStore = create<DetailState>((set, get) => ({
     ) => {
       const existing = new Set(state.searchResults.map((r) => r.source));
       const fresh = incoming.filter((r) => !existing.has(r.source));
-      const list = (merge ? [...state.searchResults, ...fresh] : incoming).slice().sort((a, b) => {
+      const sorted = (merge ? [...state.searchResults, ...fresh] : incoming).slice().sort((a, b) => {
         const [ar, as_] = rankOf(a);
         const [br, bs] = rankOf(b);
         return br - ar || bs - as_;
       });
+      // 本机偏好：被隐藏的源不进列表（全都隐藏时退回完整列表，避免出现空页）
+      const prefs = getSourcePrefsSync();
+      const visible = sorted.filter((r) => !prefs.hidden.includes(r.source));
+      const list = visible.length ? visible : sorted;
       return {
         searchResults: list,
+        _preferred: prefs.preferred,
         sources: list.map((r) => ({
           source: r.source,
           source_name: r.source_name,
@@ -121,10 +128,17 @@ const useDetailStore = create<DetailState>((set, get) => ({
     const processAndSetResults = async (results: SearchResult[], merge = false) => {
       // 1) 先把结果放出来（不等测速）——搜索体验优先：列表立刻可见、可点播，
       //    清晰度与速度随后补上（几十个源逐个测速要好几秒，之前会一直卡在加载页）。
-      set((state) => ({
-        ...applyResults(state, results as SearchResultWithResolution[], merge),
-        detail: state.detail ?? (results[0] as SearchResultWithResolution) ?? null,
-      }));
+      set((state) => {
+        const applied = applyResults(state, results as SearchResultWithResolution[], merge) as ReturnType<
+          typeof applyResults
+        > & { _preferred?: string | null };
+        const { _preferred: pref, ...rest } = applied;
+        const preferred = pref ? applied.searchResults.find((r) => r.source === pref) : undefined;
+        return {
+          ...rest,
+          detail: state.detail ?? preferred ?? applied.searchResults[0] ?? null,
+        };
+      });
 
       // 2) 后台测速：前 N 个源做「直连 vs 代理」双链路实测（谁快用谁，并按源记住），
       //    其余源只测默认链路，避免一次搜索发太多请求。

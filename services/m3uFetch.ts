@@ -16,7 +16,7 @@ function originOf(u: string): string {
  * 仅当直播源地址与「播放代理 / 服务器地址」同源时才附带令牌，
  * 避免用户填了第三方订阅地址时把登录令牌发给别人。
  */
-async function buildAuthHeaders(m3uUrl: string): Promise<Record<string, string>> {
+export async function buildAuthHeaders(m3uUrl: string): Promise<Record<string, string>> {
   try {
     const s = await SettingsManager.get();
     const target = originOf(m3uUrl);

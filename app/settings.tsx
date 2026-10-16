@@ -13,6 +13,7 @@ import { VodProxySection, VodProxySectionRef } from "@/components/settings/VodPr
 import { LiveStreamSection } from "@/components/settings/LiveStreamSection";
 import { RemoteInputSection } from "@/components/settings/RemoteInputSection";
 import { UpdateSection } from "@/components/settings/UpdateSection";
+import { SourceManageSection } from "@/components/settings/SourceManageSection";
 import { useBackToHome } from "@/hooks/useBackToHome";
 import Toast from "react-native-toast-message";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
@@ -20,7 +21,7 @@ import { getCommonResponsiveStyles } from "@/utils/ResponsiveStyles";
 import ResponsiveNavigation from "@/components/navigation/ResponsiveNavigation";
 import ResponsiveHeader from "@/components/navigation/ResponsiveHeader";
 import { DeviceUtils } from "@/utils/DeviceUtils";
-import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
+import { KeyboardAwareScrollView } from "react-native-keyboard-aware-scroll-view";
 
 type SectionItem = {
   component: React.ReactElement;
@@ -28,9 +29,7 @@ type SectionItem = {
 };
 
 /** 过滤掉 false/undefined，帮 TypeScript 推断出真正的数组元素类型 */
-function isSectionItem(
-  item: false | undefined | SectionItem
-): item is SectionItem {
+function isSectionItem(item: false | undefined | SectionItem): item is SectionItem {
   return !!item;
 }
 
@@ -160,6 +159,18 @@ export default function SettingsScreen() {
       ),
       key: "livestream",
     },
+    {
+      // 2026-10-16: 源管理（服务端巡检结论 + 本机隐藏/优先偏好）
+      component: (
+        <SourceManageSection
+          onFocus={() => {
+            setCurrentFocusIndex(4);
+            setCurrentSection("sources");
+          }}
+        />
+      ),
+      key: "sources",
+    },
     Platform.OS === "android" && {
       component: <UpdateSection />,
       key: "update",
@@ -167,7 +178,6 @@ export default function SettingsScreen() {
   ] as const; // 把每个对象都当作字面量保留
   /** 这里得到的 sections 已经是 SectionItem[]（没有 false） */
   const sections: SectionItem[] = rawSections.filter(isSectionItem);
-
 
   // TV遥控器事件处理 - 仅在TV设备上启用
   const handleTVEvent = React.useCallback(
@@ -185,10 +195,10 @@ export default function SettingsScreen() {
         setCurrentFocusIndex(prevIndex);
       }
     },
-    [currentFocusIndex, sections.length, deviceType]
+    [currentFocusIndex, sections.length, deviceType],
   );
 
-  useTVEventHandler(deviceType === "tv" ? handleTVEvent : () => { });
+  useTVEventHandler(deviceType === "tv" ? handleTVEvent : () => {});
 
   // 动态样式
   const dynamicStyles = createResponsiveStyles(deviceType, spacing, insets);
@@ -202,7 +212,6 @@ export default function SettingsScreen() {
       scrollEnabled={true}
       style={{ flex: 1, backgroundColor }}
     >
-
       <ThemedView style={[commonStyles.container, dynamicStyles.container]}>
         {deviceType === "tv" && (
           <View style={dynamicStyles.header}>
@@ -225,7 +234,7 @@ export default function SettingsScreen() {
           />
         </View> */}
         <View style={dynamicStyles.scrollView}>
-          {sections.map(item => (
+          {sections.map((item) => (
             // 必须把 key 放在最外层的 View 上
             <View key={item.key} style={dynamicStyles.itemWrapper}>
               {item.component}
@@ -302,7 +311,7 @@ const createResponsiveStyles = (deviceType: string, spacing: number, insets: any
       opacity: 0.5,
     },
     itemWrapper: {
-      marginBottom: spacing,   // 这里的 spacing 来自 useResponsiveLayout()
+      marginBottom: spacing, // 这里的 spacing 来自 useResponsiveLayout()
     },
   });
 };
