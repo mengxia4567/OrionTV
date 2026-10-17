@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { api, SearchResult, PlayRecord } from "@/services/api";
+import { api, SearchResult, PlayRecord, getStoredAuthToken } from "@/services/api";
 import { PlayRecordManager } from "@/services/storage";
 import useAuthStore from "./authStore";
 import { useSettingsStore } from "./settingsStore";
@@ -107,7 +107,13 @@ const useHomeStore = create<HomeState>((set, get) => ({
 
   fetchInitialData: async () => {
     const { apiBaseUrl } = useSettingsStore.getState();
-    await useAuthStore.getState().checkLoginStatus(apiBaseUrl);
+    // 已登录（有令牌）→ 不等登录态检查，直接取数；401 由请求层自愈。
+    // 只有未登录时才需要先判定是否弹登录框。
+    if (await getStoredAuthToken()) {
+      void useAuthStore.getState().checkLoginStatus(apiBaseUrl);
+    } else {
+      await useAuthStore.getState().checkLoginStatus(apiBaseUrl);
+    }
 
     const { selectedCategory } = get();
     const cacheKey = getCacheKey(selectedCategory);

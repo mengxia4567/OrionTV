@@ -1,5 +1,27 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
+/** 单次 API 请求的超时（不含调用方自带的 signal）：避免弱网/错地址无限等待 */
+const REQUEST_TIMEOUT_MS = 15000;
+
+/** 这些图源国内直连会被防盗链或墙，必须经服务端图片代理 */
+const PROXY_IMAGE_HOSTS = [
+  "doubanio.com",
+  "douban.com",
+  "tmdb.org",
+  "bgm.tv",
+  "bangumi.tv",
+  "bangumi.lol",
+];
+
+function needsImageProxy(imageUrl: string): boolean {
+  try {
+    const host = new URL(imageUrl).hostname.toLowerCase();
+    return PROXY_IMAGE_HOSTS.some((d) => host === d || host.endsWith(`.${d}`));
+  } catch {
+    return false;
+  }
+}
+
 // region: --- Interface Definitions ---
 export interface DoubanItem {
   title: string;
@@ -80,19 +102,33 @@ export interface ServerConfig {
 // 服务端中间件优先读取该头，支持 "Token xxx" / "Bearer xxx" / 原始值三种形式。
 export const AUTH_TOKEN_KEY = "authToken";
 
+/**
+ * 内存令牌缓存：`<Image>` 的 source 不能 await，必须同步拿到令牌。
+ * 读/写令牌的两处入口都会刷新它，正常流程（启动登录态检查）已提前填充。
+ */
+let cachedAuthToken: string | null = null;
+
+/** 已登录时返回令牌（同步）；未登录/尚未读取时返回 null */
+export function getCachedAuthToken(): string | null {
+  return cachedAuthToken;
+}
+
 export async function getStoredAuthToken(): Promise<string | null> {
   try {
     const token = await AsyncStorage.getItem(AUTH_TOKEN_KEY);
-    return token && token.trim() ? token : null;
+    cachedAuthToken = token && token.trim() ? token : null;
+    return cachedAuthToken;
   } catch {
-    return null;
+    return cachedAuthToken;
   }
 }
 
 export async function setStoredAuthToken(token: string | null | undefined): Promise<void> {
+  const next = token && token.trim() ? token : null;
+  cachedAuthToken = next;
   try {
-    if (token && token.trim()) {
-      await AsyncStorage.setItem(AUTH_TOKEN_KEY, token);
+    if (next) {
+      await AsyncStorage.setItem(AUTH_TOKEN_KEY, next);
     } else {
       await AsyncStorage.removeItem(AUTH_TOKEN_KEY);
     }
@@ -144,14 +180,15 @@ export class API {
 
   private async _fetch(
     url: string,
-    options: RequestInit & { skipAuth?: boolean; skipRecovery?: boolean } = {},
+    options: RequestInit & { skipAuth?: boolean; skipRecovery?: boolean; timeoutMs?: number } = {},
     retried = false
   ): Promise<Response> {
     if (!this.baseURL) {
       throw new Error("API_URL_NOT_SET");
     }
 
-    const { skipAuth = false, skipRecovery = false, ...init } = options;
+    const { skipAuth = false, skipRecovery = false, timeoutMs, ...init } = options;
+    const timeout = timeoutMs ?? REQUEST_TIMEOUT_MS;
 
     const headers = new Headers(init.headers);
     if (!skipAuth) {
@@ -161,7 +198,24 @@ export class API {
       }
     }
 
-    const response = await fetch(`${this.baseURL}${url}`, { ...init, headers });
+    // 未显式传入 signal 时自带超时：坏网络/错地址不再无限挂起（此前保存与首屏会一直等）
+    const controller = init.signal ? null : new AbortController();
+    const timer = controller ? setTimeout(() => controller.abort(), timeout) : null;
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseURL}${url}`, {
+        ...init,
+        headers,
+        ...(controller ? { signal: controller.signal } : {}),
+      });
+    } catch (error) {
+      if (controller?.signal.aborted) {
+        throw new Error("TIMEOUT");
+      }
+      throw error;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
 
     if (response.status === 401) {
       // 令牌过期/失效：自动续期或静默重登一次，然后重试原请求
@@ -235,7 +289,8 @@ export class API {
   }
 
   async getServerConfig(): Promise<ServerConfig> {
-    const response = await this._fetch("/api/server-config");
+    // 保存设置时会顺带刷新：这里用短超时，服务器地址填错时不要长期挂住
+    const response = await this._fetch("/api/server-config", { timeoutMs: 8000 });
     return response.json();
   }
 
@@ -302,6 +357,24 @@ export class API {
 
   getImageProxyUrl(imageUrl: string): string {
     return `${this.baseURL}/api/image-proxy?url=${encodeURIComponent(imageUrl)}`;
+  }
+
+  /**
+   * 海报图片源：
+   *  - 豆瓣 / TMDB / Bangumi 的图国内直连会被防盗链或墙（418/403/超时）→ 走服务端图片代理，并带登录令牌
+   *  - 其它源站封面本来就能直连，保持原样（走代理反而会被豆瓣 Referer 影响）
+   * `<Image>` 的 source 不能 await，所以用内存缓存的令牌；未登录时只返回 uri（服务端会 401）。
+   */
+  getImageSource(imageUrl: string): {
+    uri: string;
+    headers?: Record<string, string>;
+  } {
+    if (!needsImageProxy(imageUrl)) {
+      return { uri: imageUrl };
+    }
+    const uri = this.getImageProxyUrl(imageUrl);
+    const token = getCachedAuthToken();
+    return token ? { uri, headers: { Authorization: `Token ${token}` } } : { uri };
   }
 
   /**
@@ -597,7 +670,8 @@ export class API {
 
   async searchVideos(query: string): Promise<{ results: SearchResult[] }> {
     const url = `/api/search?q=${encodeURIComponent(query)}`;
-    const response = await this._fetch(url);
+    // 全源搜索由服务端逐个源查，耗时远高于普通接口
+    const response = await this._fetch(url, { timeoutMs: 45000 });
     return response.json();
   }
 

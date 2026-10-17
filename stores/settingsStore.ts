@@ -134,7 +134,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     api.setVodProxy(vodProxyUrl, vodProxyToken);
     // Also update the URL in the state so the input field shows the processed URL
     set({ isModalVisible: false, apiBaseUrl: processedApiBaseUrl });
-    await get().fetchServerConfig();
+    // 服务器配置只用于“静默登录/是否需要登录框”，不该拖住保存按钮：后台刷新即可
+    void get().fetchServerConfig();
   },
   showModal: () => set({ isModalVisible: true }),
   hideModal: () => set({ isModalVisible: false }),
