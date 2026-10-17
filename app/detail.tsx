@@ -127,7 +127,7 @@ export default function DetailScreen() {
     >
       <View style={dynamicStyles.modalBackdrop}>
         <View style={dynamicStyles.modalCard}>
-          <ThemedText style={dynamicStyles.modalTitle}>选择播放源（按清晰度 / 速度排序）</ThemedText>
+          <ThemedText style={dynamicStyles.modalTitle}>选择播放源（按清晰度排序）</ThemedText>
           <FlatList
             data={searchResults}
             keyExtractor={(item) => `${item.source}-${item.id}`}

@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { SearchResult, api } from "@/services/api";
-import { probeStream, measureVodPaths } from "@/services/m3u8";
+import { probeStream } from "@/services/m3u8";
 import { primeVodPathPrefs } from "@/services/vodPath";
 import { getSourcePrefsSync, primeSourcePrefs } from "@/services/sourcePrefs";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -140,37 +140,22 @@ const useDetailStore = create<DetailState>((set, get) => ({
         };
       });
 
-      // 2) 后台测速：前 N 个源做「直连 vs 代理」双链路实测（谁快用谁，并按源记住），
-      //    其余源只测默认链路，避免一次搜索发太多请求。
-      const DUAL_PROBE_LIMIT = 8;
+      // 2) 后台补清晰度（只做展示）：不再测速、不再自动选路 —— 线路由用户在播放页手动切换。
       const enriched = await Promise.all(
-        results.map(async (searchResult, idx) => {
+        results.map(async (searchResult) => {
           let resolution: string | null = null;
-          let speedKb = 0;
-          let speedDirect: number | undefined;
-          let speedProxy: number | undefined;
-          let path: "direct" | "proxy" | undefined;
           try {
             if (searchResult.episodes && searchResult.episodes.length > 0) {
-              if (idx < DUAL_PROBE_LIMIT) {
-                const m = await measureVodPaths(searchResult.episodes[0], searchResult.source, signal);
-                resolution = (m.chosen === "proxy" ? m.proxy : m.direct)?.resolution ?? m.direct.resolution;
-                speedDirect = m.direct.speedKb;
-                speedProxy = m.proxy?.speedKb;
-                speedKb = m.chosen === "proxy" ? (m.proxy?.speedKb ?? 0) : m.direct.speedKb;
-                path = m.chosen;
-              } else {
-                const probe = await probeStream(searchResult.episodes[0], signal);
-                resolution = probe.resolution;
-                speedKb = probe.speedKb;
-              }
+              // 只探测清晰度用于展示；不再自动测速选路（线路由用户在播放页手动切换）
+              const probe = await probeStream(searchResult.episodes[0], signal, "proxy");
+              resolution = probe.resolution;
             }
           } catch (e) {
             if ((e as Error).name !== "AbortError") {
               logger.info(`Failed to probe ${searchResult.source_name}`, e);
             }
           }
-          return { ...searchResult, resolution, speedKb, speedDirect, speedProxy, path };
+          return { ...searchResult, resolution };
         }),
       );
 

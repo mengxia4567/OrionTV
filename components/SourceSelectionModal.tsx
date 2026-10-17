@@ -39,7 +39,7 @@ export const SourceSelectionModal: React.FC = () => {
     <Modal visible={showSourceModal} transparent={true} animationType="slide" onRequestClose={onClose}>
       <View style={styles.modalContainer}>
         <View style={styles.modalContent}>
-          <Text style={styles.modalTitle}>选择播放源（按清晰度 / 速度排序）</Text>
+          <Text style={styles.modalTitle}>选择播放源（按清晰度排序）</Text>
           <FlatList
             data={searchResults}
             contentContainerStyle={styles.sourceList}

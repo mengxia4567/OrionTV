@@ -6,20 +6,19 @@ import { PlayRecord, PlayRecordManager, PlayerSettingsManager } from "@/services
 import useDetailStore, { episodesSelectorBySource } from "./detailStore";
 import Logger from "@/utils/Logger";
 import { api, unwrapVodProxyUrl } from "@/services/api";
-import { getVodPathSync, primeVodPathPrefs } from "@/services/vodPath";
+import { getVodPathSync, primeVodPathPrefs, setVodPathSync, type VodPath } from "@/services/vodPath";
 
 // 预热链路偏好缓存（播放路径上是同步读取）
 primeVodPathPrefs().catch(() => undefined);
 
 const logger = Logger.withTag("PlayerStore");
 
-// 点播链路：默认走服务端代理；若该源实测「直连更快」（vodPath 里记着），则直连播放。
-// 结论来自 App 自己的双链路测速（services/m3u8.ts measureVodPaths），只认设备真实网络。
-const toPlayUrl = (ep: string): string => {
+// 点播链路：**手动选择**（vodPath 按源记忆），默认代理。
+// 不再自动按测速结果切换 —— 电视上「直连速度好」但实际播放持续缓冲的情况太多。
+const toPlayUrl = (ep: string, source: string, mode: VodPath): string => {
+  if (mode === "direct") return ep;
   try {
-    const source = useDetailStore.getState().detail?.source ?? "";
-    if (getVodPathSync(source) === "direct") return ep;
-    return api.getVodProxyUrl(ep);
+    return api.getVodProxyUrl(ep) || ep;
   } catch {
     return ep;
   }
@@ -34,6 +33,10 @@ interface PlayerState {
   videoRef: RefObject<Video> | null;
   currentEpisodeIndex: number;
   episodes: Episode[];
+  /** 原始播放地址（未套代理），切换线路时用它重新生成 episodes */
+  rawEpisodes: string[];
+  /** 当前线路（手动选择，按源记忆） */
+  vodPath: VodPath;
   status: AVPlaybackStatus | null;
   isLoading: boolean;
   /** 所有播放源都失败：控制层显示「重试」 */
@@ -61,6 +64,8 @@ interface PlayerState {
     position?: number;
   }) => Promise<void>;
   playEpisode: (index: number) => void;
+  /** 手动切换直连 / 代理（记住到该源，并原地重载当前集） */
+  setVodPath: (mode: VodPath) => void;
   togglePlayPause: () => void;
   seek: (duration: number) => void;
   handlePlaybackStatusUpdate: (newStatus: AVPlaybackStatus) => void;
@@ -85,6 +90,8 @@ interface PlayerState {
 const usePlayerStore = create<PlayerState>((set, get) => ({
   videoRef: null,
   episodes: [],
+  rawEpisodes: [],
+  vodPath: "proxy",
   currentEpisodeIndex: -1,
   status: null,
   isLoading: true,
@@ -221,8 +228,9 @@ const usePlayerStore = create<PlayerState>((set, get) => ({
       const initialPositionFromRecord = playRecord?.play_time ? playRecord.play_time * 1000 : 0;
       const savedPlaybackRate = playerSettings?.playbackRate || 1.0;
 
+      const path = getVodPathSync(detail!.source);
       const mappedEpisodes = episodes.map((ep, index) => ({
-        url: toPlayUrl(ep),
+        url: toPlayUrl(ep, detail!.source, path),
         title: `第 ${index + 1} 集`,
       }));
 
@@ -232,6 +240,8 @@ const usePlayerStore = create<PlayerState>((set, get) => ({
         initialPosition: position || initialPositionFromRecord,
         playbackRate: savedPlaybackRate,
         episodes: mappedEpisodes,
+        rawEpisodes: episodes,
+        vodPath: path,
         introEndTime: playRecord?.introEndTime || playerSettings?.introEndTime,
         outroStartTime: playRecord?.outroStartTime || playerSettings?.outroStartTime,
       });
@@ -258,6 +268,30 @@ const usePlayerStore = create<PlayerState>((set, get) => ({
         Toast.show({ type: "error", text1: "播放失败" });
       }
     }
+  },
+
+  setVodPath: (mode) => {
+    const { rawEpisodes, status, reloadNonce, vodPath } = get();
+    if (!rawEpisodes.length || mode === vodPath) return;
+    const source = useDetailStore.getState().detail?.source ?? "";
+    // 保留当前进度：status.positionMillis 是毫秒（progressPosition 是比例，不能直接用）
+    const resumeMs = status?.isLoaded ? status.positionMillis || 0 : 0;
+    setVodPathSync(source, mode);
+    set({
+      vodPath: mode,
+      episodes: rawEpisodes.map((ep, index) => ({
+        url: toPlayUrl(ep, source, mode),
+        title: `第 ${index + 1} 集`,
+      })),
+      initialPosition: resumeMs,
+      isLoading: true,
+      loadFailed: false,
+      reloadNonce: reloadNonce + 1,
+    });
+    Toast.show({
+      type: "success",
+      text1: mode === "proxy" ? "已切到代理线路" : "已切到直连线路",
+    });
   },
 
   togglePlayPause: async () => {
@@ -458,6 +492,8 @@ const usePlayerStore = create<PlayerState>((set, get) => ({
   reset: () => {
     set({
       episodes: [],
+      rawEpisodes: [],
+      vodPath: "proxy",
       currentEpisodeIndex: 0,
       status: null,
       isLoading: true,
@@ -535,7 +571,7 @@ const usePlayerStore = create<PlayerState>((set, get) => ({
       const newEpisodes = fallbackSource.episodes || [];
       if (newEpisodes.length > currentEpisodeIndex) {
         const mappedEpisodes = newEpisodes.map((ep, index) => ({
-          url: toPlayUrl(ep),
+          url: toPlayUrl(ep, fallbackSource.source, getVodPathSync(fallbackSource.source)),
           title: `第 ${index + 1} 集`,
         }));
 

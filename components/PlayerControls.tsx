@@ -1,6 +1,6 @@
 import React from "react";
 import { View, Text, StyleSheet, Pressable } from "react-native";
-import { Pause, Play, SkipForward, List, Tv, ArrowDownToDot, ArrowUpFromDot, Gauge, Maximize } from "lucide-react-native";
+import { Pause, Play, SkipForward, List, Tv, ArrowDownToDot, ArrowUpFromDot, Gauge, Maximize, Wifi } from "lucide-react-native";
 import { ThemedText } from "@/components/ThemedText";
 import { MediaButton } from "@/components/MediaButton";
 
@@ -37,6 +37,8 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
     setOutroStartTime,
     introEndTime,
     outroStartTime,
+    vodPath,
+    setVodPath,
   } = usePlayerStore();
 
   const { detail } = useDetailStore();
@@ -123,6 +125,11 @@ export const PlayerControls: React.FC<PlayerControlsProps> = ({
 
           <MediaButton onPress={() => setShowSourceModal(true)}>
             <Tv color="white" size={24} />
+          </MediaButton>
+
+          {/* 线路：直连 / 代理（手动切换，按源记住） */}
+          <MediaButton onPress={() => setVodPath(vodPath === "proxy" ? "direct" : "proxy")} timeLabel={vodPath === "proxy" ? "代理" : "直连"}>
+            <Wifi color="white" size={24} />
           </MediaButton>
 
           {onToggleFullscreen ? (

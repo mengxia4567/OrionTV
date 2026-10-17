@@ -1,15 +1,17 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 /**
- * 点播播放链路偏好（按源记忆）
+ * 点播播放链路偏好（按源记忆，**手动选择**）
  *
- * 背景：同一部剧在不同源上，**客户端直连 CDN** 与 **经媒体代理** 谁快并不固定
- * （取决于源站 CDN、运营商、代理机器位置）。服务器侧测不出你设备的真实情况，
- * 所以在 App 里实测两条链路，谁快用谁，并按源记住结论。
+ * 背景：同一部剧在不同源上，**客户端直连 CDN** 与 **经媒体代理** 谁快并不固定，
+ * 而 App 侧的一次测速（尤其电视的弱网/WiFi）经常高估直连：显示速度不错，实际播放持续缓冲。
+ * 所以不再自动选路：默认走代理，播放页可手动切直连/代理，选择按源记住。
  */
 export type VodPath = "direct" | "proxy";
 
-const KEY = "vodPathPrefs";
+// v2：v1 是「自动测速选路」时期写入的结论（电视上常把直连判成更快），升级后不再沿用；
+// 新键只保存用户手动选择，未选过一律默认代理。
+const KEY = "vodPathPrefsV2";
 
 let cache: Record<string, VodPath> | null = null;
 
@@ -33,6 +35,13 @@ export const getVodPathSync = (source: string): VodPath => {
 export const getVodPath = async (source: string): Promise<VodPath> => {
   const p = await load();
   return p[source] ?? "proxy";
+};
+
+/** 同步写入（播放中切换要立刻生效）：先改内存缓存，再异步落盘 */
+export const setVodPathSync = (source: string, mode: VodPath): void => {
+  if (!source) return;
+  cache = { ...(cache ?? {}), [source]: mode };
+  AsyncStorage.setItem(KEY, JSON.stringify(cache)).catch(() => undefined);
 };
 
 export const setVodPath = async (source: string, mode: VodPath): Promise<void> => {

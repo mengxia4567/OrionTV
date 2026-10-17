@@ -22,6 +22,7 @@ import {
   Proportions,
   Rewind,
   FastForward,
+  Wifi,
 } from "lucide-react-native";
 import usePlayerStore from "@/stores/playerStore";
 import useDetailStore from "@/stores/detailStore";
@@ -73,6 +74,8 @@ export default function MobileVodControls({ isFullscreen, onToggleFullscreen, on
     setShowEpisodeModal,
     setShowSourceModal,
     setShowSpeedModal,
+    vodPath,
+    setVodPath,
   } = usePlayerStore();
   const detail = useDetailStore((s) => s.detail);
   const aspectMode = useAspectStore((s) => s.mode);
@@ -428,6 +431,12 @@ export default function MobileVodControls({ isFullscreen, onToggleFullscreen, on
               </BarBtn>
               <BarBtn label="换源" onPress={act(() => setShowSourceModal(true))}>
                 <Layers size={22} color="#fff" />
+              </BarBtn>
+              <BarBtn
+                label={vodPath === "proxy" ? "线路·代理" : "线路·直连"}
+                onPress={act(() => setVodPath(vodPath === "proxy" ? "direct" : "proxy"))}
+              >
+                <Wifi size={22} color="#fff" />
               </BarBtn>
               <BarBtn
                 label="下一集"
